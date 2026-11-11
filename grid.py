@@ -38,14 +38,22 @@ Indexing
     i runs along m and j along eta, so node arrays are (n_m, n_eta). dm and deta are
     constant [Aungier 2003 Sec. 5.3, p. 87].
 
-Status: FROZEN geometric grid implementation (2026-11-07, with the tracked wall identity of
-section 3). make_passage_boundaries builds the side boundaries of one passage; make_grid
-checks that the smooth passage is open over the whole blade, then builds the stations, the
-blade-passage topology, the wall values and the nodes; rebuild_exit turns the exit
-extension to a new discharge angle. Coordinates
-only: no wall slope, metric or flow quantity is computed here. node_index and node_theta
-are not implemented. Deferred, not resolved: the straight m-links across the LE and TE
-transition intervals (section 6) are for metrics.py and discretization.py to review.
+Status: geometric grid implementation, frozen 2026-11-07 for C1 (with the tracked wall
+identity of section 3) and REOPENED 2026-11-11 for the C2 hand-off of section 7 only: for a
+C1 cascade every array is unchanged bit for bit; for a C2 cascade the blade walls are the
+authoritative curves of geometry.py (under review, not frozen). The solver goes with C2
+only for now: its grid takes the wall locations, and through metrics.py the wall angles,
+from the C2 geometry. A fair scientific comparison of C1 against C2 is planned for later
+(an exact piecewise-C1 derivative path first, so that only the surface continuity
+differs); until then the C1 path is kept unchanged as the legacy baseline. make_passage_boundaries
+builds the side boundaries of one passage; make_grid checks that the smooth passage is open
+over the whole blade, then builds the stations, the blade-passage topology, the wall values
+and the nodes; rebuild_exit turns the exit extension to a new discharge angle. Coordinates
+only: no wall slope, metric or flow quantity is computed here (for C2, Grid hands on the
+curves' own u derivatives at the wall nodes, section 7, and metrics.py forms the slopes).
+node_index and node_theta are not implemented. Deferred, not resolved: the straight m-links
+across the LE and TE transition intervals (section 6) are for metrics.py and
+discretization.py to review.
 
 1. Passage boundaries (make_passage_boundaries)
     Input: a Cascade from geometry.make_cascade, read through cascade.active only, and its
@@ -54,7 +62,9 @@ transition intervals (section 6) are for metrics.py and discretization.py to rev
 
     Blade walls: lower = active.suction_surface, upper = active.pressure_surface +
     active.periodic_translation, both LE -> TE exactly as geometry.py orders them: no
-    sorting by m, no point removed. The exact landmarks
+    sorting by m, no point removed. For a C2 cascade blade_curves also holds
+    cascade.active_curves, by reference, not copied: the authoritative curves those arrays
+    sample, from which the C2 grid takes its walls (section 7); None for C1. The exact landmarks
         m_le = active.leading_edge_point[0],    m_te = active.trailing_edge_point[0]
     are the chord-axis ends of the blade, not its extent in m: the rounded nose reaches
     ahead of m_le (the suction side when the LE circle center lies at +y of the LE point,
@@ -161,7 +171,7 @@ transition intervals (section 6) are for metrics.py and discretization.py to rev
     pocket of the surface, which no station line can reach. Each blade surface is one
     streamline whatever its name, so the wall condition is the same on both stretches.
 
-4. Wall values
+4. Wall values (C1; a C2 cascade takes its walls from its curves, section 7)
     The wall nodes are crossing points of the station line with a parametric PCHIP x(t),
     y(t) through the outline vertices, t the cumulative chord length: one cubic per polyline
     segment, monotone in x and in y on each segment, C1 through the LE point, and never
@@ -252,6 +262,68 @@ transition intervals (section 6) are for metrics.py and discretization.py to rev
     reviewed when the m-derivative operators and the LE/TE one-sided boundary stencils are
     implemented (metrics.py, discretization.py). The crossings are a deferred limitation,
     reported as a diagnostic, not a resolved or harmless one.
+
+7. C2: the walls are the authoritative curves (surface_continuity "C2", 2026-11-11)
+    A C2 cascade carries its surfaces as two ParametricBladeCurves X(u) = (m(u), y(u)),
+    0 <= u <= 1 from the LE point to the TE point, in the active unit and the cascade frame
+    (cascade.active_curves; its arrays are these curves sampled). For such a cascade the
+    blade is that pair of curves everywhere grid.py looks at the blade: the station cuts,
+    the topology, the wall nodes, the wall identity and the passage check. No PCHIP is
+    built and the arrays are not read for it. Everything else (stations, extensions, the
+    linear eta map, rebuild_exit, the rules of sections 2, 3, 5 and 6) is the same code as
+    for C1.
+
+    Branches. Each curve is cut at the u where m(u) or y(u) turns, into branches on which
+    both are strictly monotone. The turning points are the roots of m'(u) and y'(u), splines
+    of degree 4: found exactly per polynomial piece (scipy PPoly.roots), kept where the
+    derivative changes sign (a root of even order is no turn), and refined by bisection on
+    the curve's own derivative to round-off. So a station line x = m meets a branch at most
+    once, and only if m lies in the branch's m range, half-open like a polyline segment
+    (min <= m < max): a line through a nose tip counts it twice, a line through a tail end
+    or a sharp TE corner not at all, exactly as for C1's vertices. The outline runs suction
+    curve TE -> LE (u from 1 to 0), then pressure curve LE -> TE.
+
+    Roots. On a crossed branch m(u) - m_i keeps its sign at one end; 64 bisection steps on
+    the branch's u interval, evaluating curve.evaluate itself, take u to round-off, and the
+    wall node is X(u_i): y_i = y(u_i) exactly and |m(u_i) - m_i| at the round-off of m. A
+    station's crossings are all branch roots, in height order; the topology (section 3:
+    metal on the line, TOUCH, one run of blade stations) is read from them exactly as from
+    the polyline, so first_blade_i and last_blade_i follow the same rule on the curve. The
+    curve reaches slightly past the extreme vertices of its own samples (1.9e-6 c ahead of
+    the most upstream sample at the EXAMPLE's nose, 2.7e-7 c behind the last one at its
+    tail), so a station inside such a sliver is a blade station of the curve where the
+    sampled polyline would call it periodic: the only way the blade run can differ from a
+    grid read from the arrays.
+
+    Passage-facing roots. Several roots on one curve are ordinary at a rounded nose (the
+    line ahead of the LE point meets the nose twice, both on the surface the nose tip lies
+    on) and at a Kovach tail (the line behind the TE point meets the tail return and the
+    other side of the same surface). The choice is the rule of section 3, not a surface
+    name: the highest crossing is the lower wall, on the reference blade's upper contour,
+    and the lowest crossing moved one pitch is the upper wall, on the neighbor's lower
+    contour. The contours run from the nose tip (the branch end of least m) to the tail end
+    (the branch end of greatest m); a wall node off its contour, a wall running backward
+    along it, or a named surface changing away from the LE or TE point is a GridError, as
+    for C1. The contour coordinate is tau = (1 - u) L_s on the suction curve and L_s + u L_p
+    on the pressure curve (L = reference_length, so tau is the C1 arc length to 1e-5), and
+    WallSide.parameter is u itself.
+
+    What the Grid keeps (no new Grid field): boundaries.blade_curves, and for every wall
+    node of the blade stations wall_identity.<lower|upper>.surface (which curve: "suction"
+    or "pressure", on the reference blade for the lower wall and on its +pitch neighbor for
+    the upper wall), .u (where on it) and .contour (where along the passage-facing contour).
+    Grid checks that every C2 wall node is that curve point, within TOUCH chord (it is so to
+    round-off), whoever built the nodes. Grid.wall_curve_derivative(order) hands on
+    d^k X / du^k of the same curve at the same u for k = 0 (the nodes themselves), 1, 2, so
+    metrics.py takes the C2 wall slopes from the curve without reading wall names; C1 grids
+    have no such curves (has_wall_curves False).
+
+    Passage check (section 4) on the curves: the blade's m range is cut at the m of every
+    branch end and every interior knot of either curve into pieces; inside a piece the top
+    and the bottom of the cut stay on one branch each, monotone in m and in y, so the same
+    bound from the two piece ends holds, and the same zoom finds a narrow waist to
+    round-off. The straight-segment span of section 4 becomes the curve's span at the piece
+    ends.
 """
 
 from __future__ import annotations
@@ -262,7 +334,7 @@ from functools import cached_property
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import PchipInterpolator
+from scipy.interpolate import BSpline, PchipInterpolator, PPoly
 
 from potential_flow_solver.config import GridSettings
 from potential_flow_solver.geometry import Cascade
@@ -272,6 +344,9 @@ TOUCH = 1e-12                       # chords: a cut thinner than this touches th
                                     # passage no wider than this is closed (section 4, passage check)
 _SAMPLES = 16                       # passage check: cells per doubtful piece and per zoom round
 _ZOOMS = 16                         # passage check: zoom rounds, each shrinking a cell by _SAMPLES / 2 = 8
+_BISECTIONS = 64                    # C2 (section 7): bisection steps of a root in u, past the round-off of u in [0, 1]
+_TURN_BRACKET = 1e-9                # C2: a root of m'(u) or y'(u) is a turn if the derivative changes sign across +- this
+_TURN_MERGE = 1e-12                 # C2: candidate roots of one derivative closer than this in u are one candidate
 
 Points = NDArray[np.float64]
 
@@ -292,7 +367,12 @@ class PassageBoundaries:
     cascade, so m is the axial x of geometry.py; point arrays are (n, 2) of (m, y), in the
     active length unit of the Cascade, and read-only.
 
-    "lower" is the eta = 0 side (theta0) and "upper" the eta = 1 side (theta1)."""
+    "lower" is the eta = 0 side (theta0) and "upper" the eta = 1 side (theta1).
+
+    blade_curves is cascade.active_curves of a C2 cascade, held by reference (geometry.py
+    owns it; nothing is copied or refitted), or None for a C1 cascade (module docstring,
+    section 7). Its type is geometry.SurfaceCurves; grid.py takes nothing from geometry but
+    Cascade, so the name is not imported."""
 
     chord: float                            # active.chord, the unit of the extension lengths
     pitch: float                            # active.pitch
@@ -305,6 +385,7 @@ class PassageBoundaries:
     m_out: float                            # far exit station, m_te + downstream_extension_chords * chord
     lower_blade_boundary: Points            # active.suction_surface, LE -> TE, unchanged
     upper_blade_boundary: Points            # active.pressure_surface + periodic_translation, LE -> TE
+    blade_curves: SurfaceCurves | None      # C2: cascade.active_curves (the curves the two arrays above sample); C1: None
     upstream_m: NDArray[np.float64]         # uniform samples, upstream_m[0] = m_in, upstream_m[-1] = m_le
     upstream_beta: NDArray[np.float64]      # side-boundary angle, radians: inlet_angle -> kappa_le
     upstream_lower_boundary: Points         # (m, y); ends on the exact LE point
@@ -317,7 +398,11 @@ class PassageBoundaries:
     def __post_init__(self) -> None:
         for item in fields(self):
             value = getattr(self, item.name)
-            if isinstance(value, np.ndarray):
+            if item.name == "blade_curves":
+                if value is not None and not all(hasattr(value, name) for name in ("suction", "pressure")):
+                    raise TypeError(f"blade_curves must be the cascade's active_curves or None, got "
+                                    f"{type(value).__name__}")
+            elif isinstance(value, np.ndarray):
                 array = np.array(value, dtype=float)
                 array.flags.writeable = False
                 object.__setattr__(self, item.name, array)
@@ -329,11 +414,20 @@ class PassageBoundaries:
 class WallSide:
     """One wall's nodes at the blade stations, in station order: the named surface of
     geometry.py each lies on, the place on that surface, and the place along the wall's
-    contour (module docstring, section 3). Read-only arrays."""
+    contour (module docstring, sections 3 and 7). Read-only arrays.
+
+    For a C2 cascade the named surface is also the authoritative curve the node lies on
+    (boundaries.blade_curves.suction or .pressure: on the reference blade for the lower
+    wall, on its +pitch neighbor for the upper wall), and u is the node's parameter on it:
+    curve.evaluate(u) is the node (plus periodic_translation for the upper wall). C1 has no
+    such curve and u is NaN there."""
 
     surface: NDArray[np.str_]               # "suction" or "pressure"
-    parameter: NDArray[np.float64]          # on that surface: 0 at geometry.py's LE point, 1 at its TE point (chord length)
-    contour: NDArray[np.float64]            # outline chord-length parameter along the wall's contour from the nose tip
+    parameter: NDArray[np.float64]          # on that surface: 0 at geometry.py's LE point, 1 at its TE point (C1: chord
+                                            # length; C2: u itself)
+    u: NDArray[np.float64]                  # C2: parameter of the node on the surface's curve, exact to round-off; C1: NaN
+    contour: NDArray[np.float64]            # along the wall's contour from the nose tip: C1 the outline's chord-length
+                                            # parameter, C2 tau (section 7); a length either way
     hidden: NDArray[np.int64]               # further crossings of the station line with that contour, behind the node
 
     def __post_init__(self) -> None:
@@ -390,7 +484,7 @@ class Grid:
             object.__setattr__(self, name, array)
         for name in ("first_blade_i", "last_blade_i"):
             object.__setattr__(self, name, int(getattr(self, name)))
-        row = _BladeRow(self.boundaries)
+        row = _row_of(self.boundaries)
         cut = row.cut(self.m)
         cutting = cut.cuts_blade
         expected = np.zeros(len(self.m), dtype=bool)
@@ -412,12 +506,60 @@ class Grid:
                             f"the blade's cut: the lower node, its top, must lie above the upper node moved down one "
                             f"pitch, its bottom")
         object.__setattr__(self, "_wall_identity", row.identity(cut, walls, self.first_blade_i))
+        if self.has_wall_curves:
+            self._check_on_curves(walls, row.touch)
+
+    def _check_on_curves(self, walls: slice, tolerance: float) -> None:
+        """C2: GridError unless every wall node of the blade stations is the point of its
+        authoritative curve at its u (module docstring, section 7), within TOUCH chord."""
+        lower, upper = self.wall_curve_derivative(0)
+        m = self.m[walls]
+        for name, curve_points, nodes in (("lower", lower, self.nodes[walls, 0]), ("upper", upper, self.nodes[walls, -1])):
+            off = np.maximum(np.abs(curve_points[:, 0] - m), np.abs(curve_points[:, 1] - nodes[:, 1]))
+            bad = np.flatnonzero(~(off <= tolerance))
+            if bad.size:
+                i = self.first_blade_i + int(bad[0])
+                raise GridError(f"the {name} wall node of blade station {i} (m = {self.m[i]:.6g}) is {off[bad[0]]:.3g} "
+                                f"off its authoritative curve point: a C2 wall node must be X(u) of the curve and u that "
+                                f"wall_identity records")
 
     @property
     def wall_identity(self) -> WallIdentity:
         """Which named surface of geometry.py each wall node of the blade stations lies on,
-        where on it, and where along its wall's contour; checked when the Grid is made."""
+        where on it, and where along its wall's contour; checked when the Grid is made. For
+        a C2 cascade also the node's parameter u on that surface's authoritative curve."""
         return self._wall_identity
+
+    @property
+    def has_wall_curves(self) -> bool:
+        """True for a C2 cascade, whose blade walls are authoritative parametric curves
+        (boundaries.blade_curves): wall_curve_derivative is then available."""
+        return self.boundaries.blade_curves is not None
+
+    def wall_curve_derivative(self, order: int) -> tuple[Points, Points]:
+        """(lower, upper): d^order X / du^order of the authoritative curve at each wall node
+        of the blade stations, first_blade_i .. last_blade_i, each (n_blade, 2) of (m, y)
+        components and read-only (module docstring, section 7). The curve and u of every node
+        are those of wall_identity, so order 0 returns the wall nodes themselves (the upper
+        wall on the +pitch neighbor), and orders 1 and 2 are the same curve's exact
+        derivatives at the same points, in the active length unit per unit u. A C2 cascade
+        only: GridError for a grid whose walls are sampled surfaces (C1)."""
+        curves = self.boundaries.blade_curves
+        if curves is None:
+            raise GridError("this grid's blade walls are sampled surfaces (a C1 cascade): there is no authoritative "
+                            "curve to evaluate; has_wall_curves is False")
+        out = []
+        for side, shift in ((self._wall_identity.lower, None), (self._wall_identity.upper, self.boundaries.periodic_translation)):
+            value = np.empty((len(side.u), 2))
+            for name in ("suction", "pressure"):
+                on = side.surface == name
+                if np.any(on):
+                    value[on] = getattr(curves, name).derivative(side.u[on], order)
+            if order == 0 and shift is not None:
+                value = value + shift
+            value.flags.writeable = False
+            out.append(value)
+        return out[0], out[1]
 
     @property
     def lower_boundary(self) -> Points:
@@ -519,7 +661,8 @@ def make_passage_boundaries(cascade: Cascade, settings: GridSettings, inlet_angl
                             exit_angle: float | None = None) -> PassageBoundaries:
     """The blade walls of one passage and its inlet and exit extensions.
 
-    cascade is read through cascade.active and its blade angles only. settings gives the
+    cascade is read through cascade.active, cascade.active_curves (handed on by reference as
+    blade_curves: the C2 curves, or None for C1) and its blade angles only. settings gives the
     extension lengths (upstream_ and downstream_extension_chords) and the passage
     resolution (n_passage) that sets their sample spacing. inlet_angle and exit_angle are
     the far-inlet and far-exit flow angles in radians from the meridional (axial)
@@ -571,6 +714,7 @@ def make_passage_boundaries(cascade: Cascade, settings: GridSettings, inlet_angl
         m_out=m_out,
         lower_blade_boundary=a.suction_surface,
         upper_blade_boundary=a.pressure_surface + a.periodic_translation,
+        blade_curves=cascade.active_curves,
         upstream_m=upstream_m,
         upstream_beta=upstream_beta,
         upstream_lower_boundary=upstream_lower,
@@ -587,8 +731,10 @@ def make_grid(cascade: Cascade, settings: GridSettings, inlet_angle: float,
     """The structured grid of one passage of cascade: make_passage_boundaries, then the
     uniform stations, the blade-passage topology from the cuts of the station lines with
     the blade row, the wall values at the blade stations and the nodes (module docstring,
-    sections 2 to 5). Angles as in make_passage_boundaries, in radians; exit_angle None
-    takes cascade.kappa_te.
+    sections 2 to 5). For a C2 cascade the blade is its authoritative curves throughout
+    (section 7): the walls are the curves' points, with their u in Grid.wall_identity.
+    Angles as in make_passage_boundaries, in radians; exit_angle None takes
+    cascade.kappa_te.
 
     Raises what make_passage_boundaries raises, ValueError for n_eta below 2, and
     GridError when the passage is not open over the whole blade (the passage check of
@@ -602,7 +748,7 @@ def make_grid(cascade: Cascade, settings: GridSettings, inlet_angle: float,
     _check_inputs(cascade, settings, "make_grid")
     b = make_passage_boundaries(cascade, settings, inlet_angle, exit_angle)
     n_eta = _whole_number(settings.n_eta, "n_eta", 2)
-    row = _BladeRow(b)
+    row = _row_of(b)
     _check_passage(cascade, b, row)
 
     dm_target = (b.m_te - b.m_le) / settings.n_passage
@@ -660,7 +806,7 @@ def rebuild_exit(item: Grid | PassageBoundaries, exit_angle: float) -> Grid | Pa
     raise TypeError(f"rebuild_exit takes a Grid or PassageBoundaries, got {type(item).__name__}")
 
 
-def _check_passage(cascade: Cascade, b: PassageBoundaries, row: _BladeRow) -> None:
+def _check_passage(cascade: Cascade, b: PassageBoundaries, row: _Row) -> None:
     """GridError unless the passage is open over the whole blade, wherever both walls exist:
     the straight-segment cut spans less than a pitch at every m, and the smooth width is
     above TOUCH chords at every m (module docstring, section 4). It looks at the blade and
@@ -672,7 +818,7 @@ def _check_passage(cascade: Cascade, b: PassageBoundaries, row: _BladeRow) -> No
              f"at stagger {np.degrees(cascade.stagger):.6g} deg and solidity {b.chord / pitch:.10g}")
     span, where = row.widest_cut()
     if not span < pitch:
-        raise GridError(f"the straight-segment cut of {blade} spans {span / b.chord:.6g} chords at m = {where:.6g}, "
+        raise GridError(f"the {row.cut_name} of {blade} spans {span / b.chord:.6g} chords at m = {where:.6g}, "
                         f"at least the pitch: the blades overlap there and the passage closes")
     width, where = row.narrowest(pitch)
     if not width > row.touch:
@@ -697,12 +843,20 @@ def node_theta(grid: Grid) -> NDArray[np.float64]:
 
 # --- Blade row: cuts of the station lines, passage-facing wall points -----------------
 
+def _row_of(b: PassageBoundaries) -> _Row:
+    """The reference blade as grid.py reads it: the sampled outline and its PCHIP for a C1
+    cascade, the authoritative curves for a C2 cascade (module docstring, section 7)."""
+    return _BladeRow(b) if b.blade_curves is None else _CurveRow(b)
+
+
 @dataclass(frozen=True)
 class _Cut:
     """The cut of the reference blade's outline by the station lines x = m: per station,
     the polyline segments crossed (half-open in x, so a line through a vertex counts it
     once where the outline passes and twice where it turns), sorted by crossing height,
-    the heights, and the metal on the line."""
+    the heights, and the metal on the line. For a C2 blade (_CurveRow) the pieces are the
+    curves' monotone branches instead of segments, the heights are exact curve points, and
+    u holds each crossing's curve parameter."""
 
     m: NDArray[np.float64]                  # the stations
     count: NDArray[np.int64]                # crossings per station
@@ -710,6 +864,7 @@ class _Cut:
     height: NDArray[np.float64]             # (n_stations, n_segments) crossing height, ascending, inf past count
     metal: NDArray[np.float64]              # length of the reference blade's cut on the line
     touch: float                            # TOUCH chords in the active length unit
+    u: NDArray[np.float64] | None = None    # C2: (n_stations, n_branches) curve parameter of each crossing, NaN past count
 
     @property
     def cuts_blade(self) -> NDArray[np.bool_]:
@@ -728,12 +883,88 @@ class _Cut:
         return self.height[:, 0]
 
 
-class _BladeRow:
+class _Row:
+    """What the two readings of the reference blade share (_BladeRow for C1, _CurveRow for
+    C2): the passage check's narrowest width, from the subclass's pieces, smooth and touch."""
+
+    touch: float
+    cut_name: str                       # what widest_cut measures, for the passage check's message
+
+    def narrowest(self, pitch: float) -> tuple[float, float]:
+        """The smallest smooth passage width pitch - (top - bottom) that the passage check of
+        module docstring section 4 finds over the blade, and its m. Every piece is either
+        cleared by the bound (its width exceeds TOUCH throughout) or searched to round-off,
+        so the width is above TOUCH exactly when the passage is open everywhere, and when it
+        is not, it is the narrowest width of the passage. When every piece is cleared at once
+        (a passage much wider than the walls rise over one piece) it is only the smallest
+        width at the piece ends, an upper estimate."""
+        lo, hi, top, bottom = self.pieces
+
+        def walls(piece: NDArray[np.int64], m: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+            """Smooth top and bottom of the cut at the points m (n, k) of the pieces (n, 1)."""
+            piece, flat = np.broadcast_to(piece, m.shape).ravel(), m.ravel()
+            return (self.smooth(top[piece], flat).reshape(m.shape), self.smooth(bottom[piece], flat).reshape(m.shape))
+
+        def doubtful(upper: NDArray[np.float64], lower: NDArray[np.float64]) -> NDArray[np.bool_]:
+            """Cells between neighboring points along the last axis whose bound does not clear
+            TOUCH: top and bottom are monotone in m on a piece, so on a cell the width is at
+            least pitch - (largest top) + (smallest bottom) of its two ends."""
+            bound = pitch - np.maximum(upper[..., :-1], upper[..., 1:]) + np.minimum(lower[..., :-1], lower[..., 1:])
+            return ~(bound > self.touch)
+
+        found = []                                                # (width, m) of every point evaluated
+
+        def width_at(piece: NDArray[np.int64], m: NDArray[np.float64]) -> tuple[NDArray[np.float64], ...]:
+            upper, lower = walls(piece, m)
+            width = pitch - (upper - lower)
+            k = int(np.argsort(width, axis=None, kind="stable")[0])
+            found.append((float(width.flat[k]), float(m.flat[k])))
+            return width, upper, lower
+
+        piece = np.arange(len(lo))
+        _, upper, lower = width_at(piece[:, None], np.column_stack((lo, hi)))     # every vertex m, both sides
+        piece = piece[doubtful(upper, lower)[:, 0]]
+        if piece.size:
+            fraction = np.linspace(0.0, 1.0, _SAMPLES + 1)
+            m = lo[piece, None] + fraction * (hi - lo)[piece, None]
+            _, upper, lower = width_at(piece[:, None], m)
+            rows, cells = np.nonzero(doubtful(upper, lower))
+            piece, a, b = piece[rows], m[rows, cells], m[rows, cells + 1]
+            for _ in range(_ZOOMS if piece.size else 0):         # each doubtful cell to round-off
+                m = a[:, None] + fraction * (b - a)[:, None]
+                width, _, _ = width_at(piece[:, None], m)
+                k = np.argsort(width, axis=1, kind="stable")[:, 0]
+                rows = np.arange(len(k))
+                a, b = m[rows, np.maximum(k - 1, 0)], m[rows, np.minimum(k + 1, _SAMPLES)]
+        return found[int(np.argsort([width for width, _ in found], kind="stable")[0])]
+
+
+def _check_walls(lower: WallSide, upper: WallSide, splits: dict[str, list[float]], tolerance: float,
+                 first_blade_i: int) -> None:
+    """GridError if a wall runs backward along its contour, or a wall's named surface
+    changes between two stations whose contour stretch holds none of its splits (the
+    contour coordinates of geometry.py's LE and TE points on that wall's contour)."""
+    for name, wall in (("lower", lower), ("upper", upper)):
+        back = np.flatnonzero(~(np.diff(wall.contour) >= -tolerance))
+        if back.size:
+            raise GridError(f"the {name} wall runs backward along its contour between blade stations "
+                            f"{first_blade_i + back[0]} and {first_blade_i + back[0] + 1}")
+        for k in np.flatnonzero(wall.surface[1:] != wall.surface[:-1]):
+            if not any(wall.contour[k] - tolerance <= split <= wall.contour[k + 1] + tolerance
+                       for split in splits[name]):
+                raise GridError(f"the {name} wall changes from the {wall.surface[k]} to the {wall.surface[k + 1]} "
+                                f"surface between blade stations {first_blade_i + k} and {first_blade_i + k + 1} "
+                                f"without passing geometry.py's LE or TE point")
+
+
+class _BladeRow(_Row):
     """The reference blade's closed outline, read from the passage walls (suction surface
     TE -> LE, then pressure surface LE -> TE), its cuts by station lines, and the
     passage-facing wall points on a parametric PCHIP through its vertices (module
     docstring, sections 3 and 4). Every other blade of the row is this outline moved by
     whole pitches, so the reference cut describes the whole row on a station line."""
+
+    cut_name = "straight-segment cut"
 
     def __init__(self, b: PassageBoundaries) -> None:
         pressure = b.upper_blade_boundary - b.periodic_translation
@@ -801,7 +1032,7 @@ class _BladeRow:
             suction = self.on_suction(segments)
             return WallSide(surface=np.where(suction, "suction", "pressure"),
                             parameter=np.where(suction, (t_le - t) / t_le, (t - t_le) / (total - t_le)),
-                            contour=contour, hidden=hidden)
+                            u=np.full(len(t), np.nan), contour=contour, hidden=hidden)
 
         lower = side(top, t_top, np.mod(t_tip - t_top, total), np.count_nonzero(~lower_arc[segment] & crossing, axis=1) - 1)
         upper = side(bottom, t_bottom, np.mod(t_bottom - t_tip, total),
@@ -810,18 +1041,7 @@ class _BladeRow:
         on_lower = [(v - tip) % n_segments <= (tail - tip) % n_segments for v in (self.n_suction - 1, 0)]
         splits = {"lower": [np.mod(t_tip - t, total) for t, low in zip((t_le, 0.0), on_lower) if not low],
                   "upper": [np.mod(t - t_tip, total) for t, low in zip((t_le, 0.0), on_lower) if low]}
-        tolerance = self.touch
-        for name, wall in (("lower", lower), ("upper", upper)):
-            back = np.flatnonzero(~(np.diff(wall.contour) >= -tolerance))
-            if back.size:
-                raise GridError(f"the {name} wall runs backward along its contour between blade stations "
-                                f"{first_blade_i + back[0]} and {first_blade_i + back[0] + 1}")
-            for k in np.flatnonzero(wall.surface[1:] != wall.surface[:-1]):
-                if not any(wall.contour[k] - tolerance <= split <= wall.contour[k + 1] + tolerance
-                           for split in splits[name]):
-                    raise GridError(f"the {name} wall changes from the {wall.surface[k]} to the {wall.surface[k + 1]} "
-                                    f"surface between blade stations {first_blade_i + k} and {first_blade_i + k + 1} "
-                                    f"without passing geometry.py's LE or TE point")
+        _check_walls(lower, upper, splits, self.touch, first_blade_i)
         return WallIdentity(stations=np.arange(first_blade_i, first_blade_i + len(m)), lower=lower, upper=upper)
 
     def smooth_parameter(self, segment: NDArray[np.int64], m: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -861,53 +1081,184 @@ class _BladeRow:
         (x0, y0), (x1, y1) = self.outline[segment].T, self.outline[segment + 1].T
         return y0 + (m - x0) / (x1 - x0) * (y1 - y0)
 
-    def narrowest(self, pitch: float) -> tuple[float, float]:
-        """The smallest smooth passage width pitch - (top - bottom) that the passage check of
-        module docstring section 4 finds over the blade, and its m. Every piece is either
-        cleared by the bound (its width exceeds TOUCH throughout) or searched to round-off,
-        so the width is above TOUCH exactly when the passage is open everywhere, and when it
-        is not, it is the narrowest width of the passage. When every piece is cleared at once
-        (a passage much wider than the walls rise over one piece) it is only the smallest
-        width at the piece ends, an upper estimate."""
+
+class _CurveRow(_Row):
+    """The reference blade of a C2 cascade as its two authoritative curves (module
+    docstring, section 7): the closed outline suction curve TE -> LE, then pressure curve
+    LE -> TE, cut into branches monotone in m and y; its cuts by station lines, with every
+    crossing an exact curve point; the passage-facing wall points; and the pieces of the
+    passage check. Every other blade of the row is this one moved by whole pitches."""
+
+    cut_name = "cut of the curves (at a passage-check piece end)"
+
+    def __init__(self, b: PassageBoundaries) -> None:
+        self.curves = (b.blade_curves.suction, b.blade_curves.pressure)
+        self.touch = TOUCH * b.chord
+        self.lengths = tuple(curve.reference_length for curve in self.curves)
+        self.total = self.lengths[0] + self.lengths[1]
+        curve_of, u0, u1 = [], [], []
+        for index, curve in enumerate(self.curves):
+            splits = np.unique(np.concatenate(([0.0], _turning_points(curve, 0), _turning_points(curve, 1), [1.0])))
+            curve_of += [index] * (len(splits) - 1)
+            u0.append(splits[:-1])
+            u1.append(splits[1:])
+        self.curve_of = np.array(curve_of, dtype=np.int64)          # 0: suction, 1: pressure
+        self.u0, self.u1 = np.concatenate(u0), np.concatenate(u1)  # branch ends, u0 < u1 on its curve
+        branches = np.arange(len(self.curve_of))
+        self.m0, self.m1 = self.point(branches, self.u0)[:, 0], self.point(branches, self.u1)[:, 0]
+        self.lo_m, self.hi_m = np.minimum(self.m0, self.m1), np.maximum(self.m0, self.m1)
+        ends_m = np.concatenate((self.m0, self.m1))
+        ends_tau = np.concatenate((self.tau(branches, self.u0), self.tau(branches, self.u1)))
+        order = np.argsort(ends_m, kind="stable")
+        self.tau_tip, self.tau_tail = float(ends_tau[order[0]]), float(ends_tau[order[-1]])   # nose tip, tail end
+        middle = self.tau(branches, 0.5 * (self.u0 + self.u1))
+        self.lower_contour = np.mod(middle - self.tau_tip, self.total) < np.mod(self.tau_tail - self.tau_tip, self.total)
+
+    def tau(self, branch: NDArray[np.int64], u: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Contour coordinate of curve parameter u on the given branches: (1 - u) L_s on the
+        suction curve (TE at 0, LE at L_s), L_s + u L_p on the pressure curve."""
+        return np.where(self.curve_of[branch] == 0, (1.0 - u) * self.lengths[0], self.lengths[0] + u * self.lengths[1])
+
+    def point(self, branch: NDArray[np.int64], u: NDArray[np.float64]) -> Points:
+        """X(u), (n, 2), of the curve each branch belongs to: curve.evaluate itself."""
+        branch, u = np.asarray(branch).ravel(), np.asarray(u, dtype=float).ravel()
+        out = np.empty((len(u), 2))
+        for index, curve in enumerate(self.curves):
+            on = self.curve_of[branch] == index
+            if np.any(on):
+                out[on] = curve.evaluate(u[on])
+        return out
+
+    def solve(self, branch: NDArray[np.int64], m: NDArray[np.float64]) -> NDArray[np.float64]:
+        """u where the given branches cross x = m (any common shape): m(u) is strictly
+        monotone on a branch and m lies in its closed m range, so m(u) - m keeps one sign on
+        the lo side, and _BISECTIONS halvings of [u0, u1] reach the root to round-off."""
+        m = np.asarray(m, dtype=float)
+        branch = np.broadcast_to(np.asarray(branch), m.shape).ravel()
+        target = m.ravel()
+        lo, hi = self.u0[branch].copy(), self.u1[branch].copy()
+        start = self.m0[branch] - target                     # m(u) - m at the branch start; its sign stays on the lo side
+        for _ in range(_BISECTIONS):
+            mid = 0.5 * (lo + hi)
+            value = self.point(branch, mid)[:, 0] - target
+            same = np.sign(value) == np.sign(start)
+            lo, hi = np.where(same, mid, lo), np.where(same, hi, mid)
+            start = np.where(same, value, start)
+        return (0.5 * (lo + hi)).reshape(m.shape)
+
+    def cut(self, m: NDArray[np.float64]) -> _Cut:
+        station = np.asarray(m, dtype=float)
+        crossed = (self.lo_m <= station[:, None]) & (station[:, None] < self.hi_m)
+        rows, branches = np.nonzero(crossed)
+        u = np.full(crossed.shape, np.nan)
+        height = np.full(crossed.shape, np.inf)
+        if rows.size:
+            u[rows, branches] = self.solve(branches, station[rows])
+            height[rows, branches] = self.point(branches, u[rows, branches])[:, 1]
+        order = np.argsort(height, axis=1, kind="stable")
+        height, u = np.take_along_axis(height, order, axis=1), np.take_along_axis(u, order, axis=1)
+        count = np.count_nonzero(crossed, axis=1)
+        if np.any(count % 2):
+            raise GridError("a station line crosses the blade's curves an odd number of times: the outline is not closed")
+        finite = np.where(np.isfinite(height), height, 0.0)
+        exits = finite[:, 1::2]
+        pairs = exits - finite[:, 0::2][:, :exits.shape[1]]          # metal intervals, bottom to top
+        inside = np.arange(pairs.shape[1])[None, :] < (count // 2)[:, None]
+        metal = np.where(inside, pairs, 0.0).sum(axis=1)
+        return _Cut(m=station, count=count, segment=order, height=height, metal=metal, touch=self.touch, u=u)
+
+    def passage_sides(self, cut: _Cut, stations: slice) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """y of the passage-facing top and bottom of the cut at the given blade stations: the
+        curve points themselves (the top is the lower wall, the bottom moved one pitch the
+        upper)."""
+        count, height = cut.count[stations], cut.height[stations]
+        return np.take_along_axis(height, (count - 1)[:, None], axis=1)[:, 0], height[:, 0]
+
+    def identity(self, cut: _Cut, stations: slice, first_blade_i: int) -> WallIdentity:
+        """As _BladeRow.identity, on the curves: which curve, which u and where along its
+        wall's contour each wall node lies, checked the same way (module docstring, sections 3
+        and 7)."""
+        count, segment, u = cut.count[stations], cut.segment[stations], cut.u[stations]
+        last = (count - 1)[:, None]
+        top, bottom = np.take_along_axis(segment, last, axis=1)[:, 0], segment[:, 0]
+        u_top, u_bottom = np.take_along_axis(u, last, axis=1)[:, 0], u[:, 0]
+        crossing = np.arange(segment.shape[1])[None, :] < count[:, None]
+        lower_contour = self.lower_contour
+        if np.any(lower_contour[top]) or not np.all(lower_contour[bottom]):
+            raise GridError("a wall node is not on its contour: the top of a cut must lie on the blade's upper "
+                            "contour and the bottom on its lower contour")
+        total, tau_tip, tau_tail = self.total, self.tau_tip, self.tau_tail
+
+        def side(branches: NDArray[np.int64], at: NDArray[np.float64], contour: NDArray[np.float64],
+                 hidden: NDArray[np.int64]) -> WallSide:
+            return WallSide(surface=np.where(self.curve_of[branches] == 0, "suction", "pressure"), parameter=at, u=at,
+                            contour=contour, hidden=hidden)
+
+        lower = side(top, u_top, np.mod(tau_tip - self.tau(top, u_top), total),
+                     np.count_nonzero(~lower_contour[segment] & crossing, axis=1) - 1)
+        upper = side(bottom, u_bottom, np.mod(self.tau(bottom, u_bottom) - tau_tip, total),
+                     np.count_nonzero(lower_contour[segment] & crossing, axis=1) - 1)
+        # geometry.py's LE point (tau = L_s) and TE point (tau = 0 = total) on each contour
+        edges = (self.lengths[0], 0.0)
+        on_lower = [np.mod(t - tau_tip, total) <= np.mod(tau_tail - tau_tip, total) for t in edges]
+        splits = {"lower": [np.mod(tau_tip - t, total) for t, low in zip(edges, on_lower) if not low],
+                  "upper": [np.mod(t - tau_tip, total) for t, low in zip(edges, on_lower) if low]}
+        _check_walls(lower, upper, splits, self.touch, first_blade_i)
+        return WallIdentity(stations=np.arange(first_blade_i, first_blade_i + len(count)), lower=lower, upper=upper)
+
+    def smooth(self, branch: NDArray[np.int64], m: NDArray[np.float64]) -> NDArray[np.float64]:
+        """y where the given branches cross x = m: the exact curve points."""
+        return self.point(branch, self.solve(branch, m))[:, 1].reshape(np.shape(m))
+
+    @cached_property
+    def pieces(self) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.int64], NDArray[np.int64]]:
+        """The blade's m range cut at the m of every branch end and every interior knot of
+        either curve into pieces lo..hi, with the branches of the top and the bottom of the
+        cut inside each piece: no branch ends inside a piece, so the branches a line meets,
+        and their order, stay the same across it (module docstring, section 7)."""
+        knots = [curve.evaluate(curve.interior_knots)[:, 0] for curve in self.curves]
+        vertices = np.unique(np.concatenate((self.m0, self.m1, *knots)))
+        lo, hi = vertices[:-1], vertices[1:]
+        cut = self.cut(0.5 * (lo + hi))
+        top = np.take_along_axis(cut.segment, (cut.count - 1)[:, None], axis=1)[:, 0]
+        return lo, hi, top, cut.segment[:, 0]
+
+    def widest_cut(self) -> tuple[float, float]:
+        """The largest span top - bottom of the curves' cut at the piece ends, and its m (the
+        passage check's narrowest width settles the span between them)."""
         lo, hi, top, bottom = self.pieces
+        ends, top, bottom = np.concatenate((lo, hi)), np.concatenate((top, top)), np.concatenate((bottom, bottom))
+        span = self.smooth(top, ends) - self.smooth(bottom, ends)
+        k = int(np.argsort(span, kind="stable")[-1])
+        return float(span[k]), float(ends[k])
 
-        def walls(piece: NDArray[np.int64], m: NDArray[np.float64]) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            """Smooth top and bottom of the cut at the points m (n, k) of the pieces (n, 1)."""
-            piece, flat = np.broadcast_to(piece, m.shape).ravel(), m.ravel()
-            return (self.smooth(top[piece], flat).reshape(m.shape), self.smooth(bottom[piece], flat).reshape(m.shape))
 
-        def doubtful(upper: NDArray[np.float64], lower: NDArray[np.float64]) -> NDArray[np.bool_]:
-            """Cells between neighboring points along the last axis whose bound does not clear
-            TOUCH: top and bottom are monotone in m on a piece, so on a cell the width is at
-            least pitch - (largest top) + (smallest bottom) of its two ends."""
-            bound = pitch - np.maximum(upper[..., :-1], upper[..., 1:]) + np.minimum(lower[..., :-1], lower[..., 1:])
-            return ~(bound > self.touch)
-
-        found = []                                                # (width, m) of every point evaluated
-
-        def width_at(piece: NDArray[np.int64], m: NDArray[np.float64]) -> tuple[NDArray[np.float64], ...]:
-            upper, lower = walls(piece, m)
-            width = pitch - (upper - lower)
-            k = int(np.argsort(width, axis=None, kind="stable")[0])
-            found.append((float(width.flat[k]), float(m.flat[k])))
-            return width, upper, lower
-
-        piece = np.arange(len(lo))
-        _, upper, lower = width_at(piece[:, None], np.column_stack((lo, hi)))     # every vertex m, both sides
-        piece = piece[doubtful(upper, lower)[:, 0]]
-        if piece.size:
-            fraction = np.linspace(0.0, 1.0, _SAMPLES + 1)
-            m = lo[piece, None] + fraction * (hi - lo)[piece, None]
-            _, upper, lower = width_at(piece[:, None], m)
-            rows, cells = np.nonzero(doubtful(upper, lower))
-            piece, a, b = piece[rows], m[rows, cells], m[rows, cells + 1]
-            for _ in range(_ZOOMS if piece.size else 0):         # each doubtful cell to round-off
-                m = a[:, None] + fraction * (b - a)[:, None]
-                width, _, _ = width_at(piece[:, None], m)
-                k = np.argsort(width, axis=1, kind="stable")[:, 0]
-                rows = np.arange(len(k))
-                a, b = m[rows, np.maximum(k - 1, 0)], m[rows, np.minimum(k + 1, _SAMPLES)]
-        return found[int(np.argsort([width for width, _ in found], kind="stable")[0])]
+def _turning_points(curve: ParametricBladeCurve, axis: int) -> NDArray[np.float64]:
+    """u in (0, 1) where coordinate axis (0: m, 1: y) of a C2 curve turns: the roots of its u
+    derivative, a spline of one degree less, found per polynomial piece (PPoly.roots, exact
+    for a polynomial), candidates closer than _TURN_MERGE taken as one, kept where the
+    derivative changes sign across +- _TURN_BRACKET (a root of even order is no turn) and
+    refined by bisection on the curve's own derivative to round-off."""
+    derivative = BSpline(curve.knots, curve.control_points[:, axis], curve.degree).derivative()
+    roots = PPoly.from_spline(derivative).roots(extrapolate=False)
+    roots = np.unique(roots[np.isfinite(roots) & (roots > 0.0) & (roots < 1.0)])
+    if roots.size > 1:
+        roots = roots[np.concatenate(([True], np.diff(roots) > _TURN_MERGE))]
+    if roots.size == 0:
+        return roots
+    gaps = np.diff(np.concatenate(([0.0], roots, [1.0])))
+    half = np.minimum(_TURN_BRACKET, 0.5 * np.minimum(gaps[:-1], gaps[1:]))
+    lo, hi = roots - half, roots + half
+    start = curve.derivative(lo, 1)[:, axis]
+    keep = np.sign(start) * np.sign(curve.derivative(hi, 1)[:, axis]) < 0.0
+    lo, hi, start = lo[keep], hi[keep], start[keep]
+    for _ in range(_BISECTIONS):
+        mid = 0.5 * (lo + hi)
+        value = curve.derivative(mid, 1)[:, axis]
+        same = np.sign(value) == np.sign(start)
+        lo, hi = np.where(same, mid, lo), np.where(same, hi, mid)
+        start = np.where(same, value, start)
+    return 0.5 * (lo + hi)
 
 
 def _smooth_crossing(outline: Points, t: NDArray[np.float64], x_of_t: PchipInterpolator, y_of_t: PchipInterpolator,

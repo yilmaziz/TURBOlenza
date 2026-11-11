@@ -68,8 +68,51 @@ Derivatives in m, by region
     one last_blade_i - 2 .. last_blade_i, never a side-line node; the last inlet and first
     exit slopes use side-line nodes only. A run needs three stations; fewer is a
     MetricsError (raise n_passage or the extension), never a silent first-order fallback.
+    That is the whole story for a C1 grid, and for the side lines of a C2 grid. The blade
+    walls of a C2 grid take no difference at all (next section).
 
-Accuracy of the slopes (measured for the EXAMPLE; geometric, not a flow convergence)
+C2 blade walls: the authoritative curve's own derivatives
+    A C2 grid (grid.has_wall_curves) has its blade-wall nodes on the parametric curves
+    X(u) = (m(u), y(u)) of geometry.py, and grid.wall_curve_derivative(k) hands on X_u
+    (k = 1) and X_uu (k = 2) of the same curve at the same u as each wall node (grid.py
+    section 7; order 0 is the node itself, checked here against the nodes). With m a
+    regular coordinate along the wall (m_u != 0),
+        tan(beta_wall)       = dy/dm   = y_u / m_u,
+        d tan(beta_wall)/dm  = d2y/dm2 = (y_uu m_u - y_u m_uu) / m_u^3,
+    exact derivatives of the spline at the node, for tan_beta0 / tan_beta1 and
+    dtan_beta0_dm / dtan_beta1_dm on first_blade_i .. last_blade_i. No neighbouring node
+    enters, so nothing at the blade run's ends is one-sided: the first and last blade
+    stations carry the wall's true slope, however steep. A rounded nose or tail turns
+    through a vertical tangent, where m_u = 0: the curve and its curvature are smooth there,
+    but y(m) is not (d2y/dm2 = kappa / cos^3(beta)). Grid stations never sit on that
+    point (a line through a nose tip or a tail end only touches the blade and is periodic,
+    grid.py section 3), so the blade walls' values are finite, though large next to it. A
+    wall node with |m_u| <= SINGULAR_COS |X_u| (cos(beta) numerically zero) is a
+    MetricsError naming the wall, the station, its m and |m_u| (its u is in
+    grid.wall_identity): no clipping, capping or smoothing of beta, tan(beta) or its
+    derivative, anywhere.
+
+d tan(beta)/dm, d tan(beta)/d eta, and what is not stored
+    dtan_beta0_dm, dtan_beta1_dm: exact on C2 blade walls (above); elsewhere the region-wise
+    d/dm of tan_beta0, tan_beta1 (the stencils above, inside each run, no transition
+    crossed). The C1 blade walls get differences of differences there: at the rounded
+    ends that compounds the end error of the slopes (next section), so on a C1 grid these
+    two are a like-for-like comparison of the C1 treatment, not a reference.
+    In the passage, from the mapping at fixed m (no blade curve is evaluated inside):
+        d tan(beta)/dm    = (1 - eta) dtan_beta0_dm + eta dtan_beta1_dm      (dtan_beta_dm),
+        d tan(beta)/d eta = tan_beta1 - tan_beta0 = dS/dm,
+    the second exactly the array dS_dm, read as the property dtan_beta_deta (no copy, as
+    jacobian_det is S). d2S/dm2 = dtan_beta1_dm - dtan_beta0_dm is not stored: none of the
+    coefficients A to E of Eq. 5-21 needs it, and a consumer forms it exactly from these
+    two fields.
+
+Accuracy of the slopes (C1, and the side lines of either; measured for the EXAMPLE;
+geometric, not a flow convergence)
+    These are the finite-difference slopes. scripts/plot_metrics_accuracy.py audited them
+    against the smooth walls (2026-11-08): the differences are sound (second order with the
+    textbook constants on manufactured functions), and their error is local, at the
+    rounded edges, set by the station phase there. The C2 blade walls do not go through
+    this approximation at all: they take the spline derivative itself.
     Side lines: y1 = y0 + pitch, so tan(beta0) = tan(beta1), dS/dm = 0 and S = pitch there to
     round-off; the lines are smooth and the slopes converge at second order to their exact
     law dy/dm = tan(beta(m)), beta linear in m (orders 1.95 to 2.03), the largest error at
@@ -102,6 +145,9 @@ Fields (GridMetrics) and units
     beta             (n_m, n_eta)   radians, in (-pi/2, pi/2)
     sin_beta         (n_m, n_eta)   dimensionless
     cos_beta         (n_m, n_eta)   dimensionless, > sqrt(machine epsilon) (see below)
+    dtan_beta0/1_dm  (n_m,)         1/length: d tan(beta0)/dm, d tan(beta1)/dm (d2y/dm2 of the boundaries)
+    dtan_beta_dm     (n_m, n_eta)   1/length: affine in eta, (1 - eta) dtan_beta0_dm + eta dtan_beta1_dm
+    dtan_beta_deta   (n_m,)         dimensionless: property, the array dS_dm (tan(beta) is affine in eta)
     No unit is converted: lengths are those of the Grid.
 
 Singular grid angle
@@ -109,7 +155,8 @@ Singular grid angle
     1 / cos^2(beta); cos(beta) = 0 is a singularity of the coordinates. build_metrics
     refuses cos(beta) <= sqrt(machine epsilon) = 1.5e-8 (|tan(beta)| above 6.7e7), where
     1 / cos^2(beta) reaches 1 / epsilon and the difference equations lose all precision;
-    no steep-but-finite blade slope is refused.
+    no steep-but-finite blade slope is refused. On a C2 blade wall the same threshold is
+    applied to the curve's tangent, |m_u| / |X_u|, before anything is divided by m_u.
 
 Consumers (not implemented here)
     coefficients.py builds Aungier's coefficients of Eq. 5-21 from these fields, the
@@ -121,7 +168,11 @@ Consumers (not implemented here)
     so errors in S and tan(beta) pass straight into the velocity. Density, b and mdot do
     not belong here; nor do xi, A to E, or any derivative of them.
 
-Status: implemented.
+Status: implemented; reopened 2026-11-11 for the C2 wall derivatives (C1 fields unchanged
+bit for bit; the three dtan_beta fields are new for both). Not frozen: under review. The
+solver goes with C2 only for now, so its blade-wall angles are the C2 curves' own
+derivatives; a fair scientific comparison of C1 against C2 is planned for later, and the
+C1 finite-difference path is kept unchanged until then.
 """
 
 from __future__ import annotations
@@ -144,8 +195,9 @@ Field = NDArray[np.float64]
 class MetricsError(ValueError):
     """The grid's arrays break what the metric formulas assume (shapes, finite values,
     strictly increasing uniform m and eta, nodes on their stations and on the linear eta
-    map, S = pitch on the extensions, three stations in each m region), or the mapping is
-    singular: S not above round-off, or cos(beta) numerically zero."""
+    map, S = pitch on the extensions, three stations in each m region, C2 wall derivatives
+    that belong to the wall nodes), or the mapping is singular: S not above round-off, or
+    cos(beta) numerically zero (on a C2 blade wall: m_u numerically zero)."""
 
 
 @dataclass(frozen=True)
@@ -163,6 +215,9 @@ class GridMetrics:
     beta: Field                     # (n_m, n_eta), radians: grid-line angle, arctan(tan_beta)
     sin_beta: Field                 # (n_m, n_eta), dimensionless
     cos_beta: Field                 # (n_m, n_eta), dimensionless, > SINGULAR_COS
+    dtan_beta0_dm: Field            # (n_m,), 1/length: d tan(beta0)/dm; exact on C2 blade walls
+    dtan_beta1_dm: Field            # (n_m,), 1/length: d tan(beta1)/dm; exact on C2 blade walls
+    dtan_beta_dm: Field             # (n_m, n_eta), 1/length: (1 - eta) dtan_beta0_dm + eta dtan_beta1_dm
 
     def __post_init__(self) -> None:
         if not isinstance(self.grid, Grid):
@@ -183,14 +238,28 @@ class GridMetrics:
         """det of d(m, y)/d(m, eta), (n_m,): S itself, for it does not depend on eta."""
         return self.S
 
+    @property
+    def dtan_beta_deta(self) -> Field:
+        """d tan(beta)/d eta at constant m, (n_m,): tan_beta1 - tan_beta0, which is dS_dm
+        itself, for tan(beta) is affine in eta."""
+        return self.dS_dm
 
-_STATION_FIELDS = ("S", "dS_dm", "tan_beta0", "tan_beta1")
+    @property
+    def exact_wall_slopes(self) -> bool:
+        """True when the blade-wall slopes and their m derivatives are the C2 curve's own
+        derivatives (grid.has_wall_curves); False when they are differences of the nodes."""
+        return self.grid.has_wall_curves
+
+
+_STATION_FIELDS = ("S", "dS_dm", "tan_beta0", "tan_beta1", "dtan_beta0_dm", "dtan_beta1_dm")
 
 
 def build_metrics(grid: Grid) -> GridMetrics:
     """The metrics of a ready Grid (module docstring). Reads grid.m, grid.eta,
     grid.nodes, the lower and upper boundaries, the blade-station indices, dm, deta and the
-    pitch, and checks the contract the formulas rely on before using them.
+    pitch, and checks the contract the formulas rely on before using them. For a C2 grid
+    (grid.has_wall_curves) it also reads grid.wall_curve_derivative(0, 1, 2), the
+    authoritative curve at the wall nodes, after checking that order 0 is those nodes.
 
     Raises TypeError for anything but a Grid and MetricsError when the contract fails or
     the mapping is singular."""
@@ -203,18 +272,70 @@ def build_metrics(grid: Grid) -> GridMetrics:
                            f"each boundary must be (n_m, 2)")
     if not (np.array_equal(nodes[:, 0], lower) and np.array_equal(nodes[:, -1], upper)):
         raise MetricsError("the lower and upper boundaries are not the eta = 0 and eta = 1 rows of the nodes")
-    values = _metric_fields(grid.m, grid.eta, nodes, grid.first_blade_i, grid.last_blade_i, grid.pitch)
+    walls = _wall_derivatives(grid, nodes) if grid.has_wall_curves else None
+    values = _metric_fields(grid.m, grid.eta, nodes, grid.first_blade_i, grid.last_blade_i, grid.pitch, walls)
     for name, spacing, expected in (("dm", grid.dm, values.pop("_dm")), ("deta", grid.deta, values.pop("_deta"))):
         if not abs(spacing - expected) <= ROUND_OFF * abs(expected):
             raise MetricsError(f"grid.{name} = {spacing:.17g} is not the spacing of its stations, {expected:.17g}")
     return GridMetrics(grid=grid, **values)
 
 
+def _wall_derivatives(grid: Grid, nodes: Field) -> tuple[Field, Field, Field, Field]:
+    """C2: (X_u lower, X_u upper, X_uu lower, X_uu upper) of the authoritative curves at the
+    wall nodes of the blade stations, each (n_blade, 2), from grid.wall_curve_derivative,
+    once its order-0 points are checked to be those very nodes (to round-off)."""
+    blade = slice(grid.first_blade_i, grid.last_blade_i + 1)
+    m = np.asarray(grid.m, dtype=float)
+    scale = max(abs(m[0]), abs(m[-1]), m[-1] - m[0], float(np.max(np.abs(nodes[..., 1]))), grid.pitch)
+    for name, points, wall in zip(("lower", "upper"), grid.wall_curve_derivative(0), (nodes[blade, 0], nodes[blade, -1])):
+        points = np.asarray(points, dtype=float)
+        off = np.abs(points - wall) if points.shape == wall.shape else np.array([np.inf])
+        if not np.all(off <= ROUND_OFF * scale):
+            raise MetricsError(f"the {name} wall's curve points are up to {float(np.max(off)):.3g} off its wall nodes: "
+                               f"the curve derivatives would not belong to the nodes")
+    (d1_lower, d1_upper), (d2_lower, d2_upper) = grid.wall_curve_derivative(1), grid.wall_curve_derivative(2)
+    return d1_lower, d1_upper, d2_lower, d2_upper
+
+
+def _curve_slopes(wall_derivatives: tuple[Field, Field, Field, Field], m: Field, first_blade_i: int,
+                  last_blade_i: int) -> tuple[Field, Field, Field, Field]:
+    """(tan_beta0, tan_beta1, dtan_beta0_dm, dtan_beta1_dm) on the blade stations from the
+    curves' X_u and X_uu at the wall nodes (module docstring, "C2 blade walls"):
+    tan = y_u / m_u and d tan / dm = (y_uu m_u - y_u m_uu) / m_u^3, refused where
+    |m_u| <= SINGULAR_COS |X_u|."""
+    n_blade = last_blade_i - first_blade_i + 1
+    arrays = [np.asarray(a, dtype=float) for a in wall_derivatives]
+    if len(arrays) != 4 or any(a.shape != (n_blade, 2) for a in arrays):
+        raise MetricsError(f"the C2 wall derivatives must be four (n_blade, 2) = ({n_blade}, 2) arrays, got shapes "
+                           f"{[a.shape for a in arrays]}")
+    if not all(np.all(np.isfinite(a)) for a in arrays):
+        raise MetricsError("the C2 wall derivatives are not finite")
+    out = {}
+    for name, d1, d2 in (("lower", arrays[0], arrays[2]), ("upper", arrays[1], arrays[3])):
+        m_u, y_u, m_uu, y_uu = d1[:, 0], d1[:, 1], d2[:, 0], d2[:, 1]
+        speed = np.hypot(m_u, y_u)
+        singular = np.flatnonzero(~(np.abs(m_u) > SINGULAR_COS * speed))
+        if singular.size:
+            k = int(singular[0])
+            i = first_blade_i + k
+            cosine = abs(m_u[k]) / speed[k] if speed[k] > 0.0 else 0.0
+            raise MetricsError(f"the {name} blade wall is numerically vertical at blade station {i} (m = {m[i]:.10g}): "
+                               f"|dm/du| = {abs(m_u[k]):.3g} against |dX/du| = {speed[k]:.3g}, so cos(beta) = "
+                               f"{cosine:.3g} is not above {SINGULAR_COS:.3g}. The curve is smooth there, but m is no "
+                               f"coordinate along it: tan(beta) = y_u / m_u and d tan(beta)/dm = (y_uu m_u - y_u m_uu) "
+                               f"/ m_u^3 do not exist")
+        out[name] = (y_u / m_u, (y_uu * m_u - y_u * m_uu) / m_u ** 3)
+    return out["lower"][0], out["upper"][0], out["lower"][1], out["upper"][1]
+
+
 def _metric_fields(m: Field, eta: Field, nodes: Field, first_blade_i: int, last_blade_i: int,
-                   pitch: float) -> dict[str, Field | float]:
+                   pitch: float, wall_derivatives: tuple[Field, Field, Field, Field] | None = None
+                   ) -> dict[str, Field | float]:
     """The metric fields from the raw arrays of a grid: the whole computation and every
     check of build_metrics but the Grid-object ones. A separate function so that the
-    checks can be tried on arrays no valid Grid would hold."""
+    checks can be tried on arrays no valid Grid would hold. wall_derivatives, for a C2 grid,
+    is (X_u lower, X_u upper, X_uu lower, X_uu upper) of the authoritative curves at the
+    blade stations' wall nodes; None differentiates the wall nodes (C1)."""
     m, eta, nodes = (np.asarray(a, dtype=float) for a in (m, eta, nodes))
     if m.ndim != 1 or eta.ndim != 1 or nodes.shape != (len(m), len(eta), 2):
         raise MetricsError(f"m {m.shape}, eta {eta.shape} and nodes {nodes.shape} do not fit: nodes must be "
@@ -258,6 +379,13 @@ def _metric_fields(m: Field, eta: Field, nodes: Field, first_blade_i: int, last_
                                    f"must be one pitch apart")
 
     tan_beta0, tan_beta1 = _d_dm(y0, dm, runs), _d_dm(y1, dm, runs)
+    blade, exact = slice(first_blade_i, last_blade_i + 1), None
+    if wall_derivatives is not None:            # C2: the curve's own slope on the blade walls, no difference
+        exact = _curve_slopes(wall_derivatives, m, first_blade_i, last_blade_i)
+        tan_beta0[blade], tan_beta1[blade] = exact[0], exact[1]
+    dtan_beta0_dm, dtan_beta1_dm = _d_dm(tan_beta0, dm, runs), _d_dm(tan_beta1, dm, runs)
+    if exact is not None:
+        dtan_beta0_dm[blade], dtan_beta1_dm[blade] = exact[2], exact[3]
     tan_beta = (1.0 - eta)[None, :] * tan_beta0[:, None] + eta[None, :] * tan_beta1[:, None]
     cos_beta = 1.0 / np.hypot(1.0, tan_beta)
     flat = np.flatnonzero(~(cos_beta > SINGULAR_COS).ravel())
@@ -266,8 +394,10 @@ def _metric_fields(m: Field, eta: Field, nodes: Field, first_blade_i: int, last_
         raise MetricsError(f"cos(beta) = {cos_beta[i, j]:.3g} at node ({i}, {j}), beta = "
                            f"{np.degrees(np.arctan(tan_beta[i, j])):.10g} deg: the grid line there is numerically "
                            f"vertical (tan(beta) = {tan_beta[i, j]:.3g}) and 1/cos(beta) singular")
+    dtan_beta_dm = (1.0 - eta)[None, :] * dtan_beta0_dm[:, None] + eta[None, :] * dtan_beta1_dm[:, None]
     return dict(S=S, dS_dm=tan_beta1 - tan_beta0, tan_beta0=tan_beta0, tan_beta1=tan_beta1, tan_beta=tan_beta,
-                beta=np.arctan(tan_beta), sin_beta=tan_beta * cos_beta, cos_beta=cos_beta, _dm=dm, _deta=deta)
+                beta=np.arctan(tan_beta), sin_beta=tan_beta * cos_beta, cos_beta=cos_beta,
+                dtan_beta0_dm=dtan_beta0_dm, dtan_beta1_dm=dtan_beta1_dm, dtan_beta_dm=dtan_beta_dm, _dm=dm, _deta=deta)
 
 
 def _uniform_spacing(values: Field, name: str, scale: float) -> float:

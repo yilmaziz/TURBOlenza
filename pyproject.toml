@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turbolenza"
+dynamic = ["version"]
+description = "TURBOlenza: Axial Compressor Aerodynamics and Blade Design Framework"
+readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "yilmaziz" }]
+keywords = ["turbomachinery", "axial compressor", "cascade", "blade-to-blade", "potential flow", "Aungier"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = ["numpy", "scipy"]
+
+[project.optional-dependencies]
+plot = ["matplotlib"]
+test = ["pytest", "matplotlib"]
+
+[project.urls]
+Repository = "https://github.com/yilmaziz/turbolenza"
+
+[tool.setuptools.dynamic]
+version = { attr = "turbolenza.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

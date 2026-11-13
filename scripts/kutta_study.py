@@ -814,20 +814,25 @@ def phase4() -> None:
     write_csv("convergence_history.csv", history)
     # figure 1: Phase 1
     fig, ax = plt.subplots(figsize=(8.2, 4.8), facecolor=SURFACE)
-    beta_axis(ax, "Phase 1: beta_out against the grid, Kutta at the station and at m* = m_TE - delta "
-                  "(current correction, lambda_K 0.7)")
-    series = []
-    for key, by_level in variants.items():
+    beta_axis(ax, "Phase 1: beta_out, Kutta at station K and at m* = m_TE - delta (lambda_K 0.7)")
+    hue = {None: 0, **{d: k + 1 for k, d in enumerate(DELTAS)}}          # one hue per place, fixed order
+    for key, by_level in sorted(variants.items(), key=lambda kv: (kv[0][2] or 0.0, kv[0][3] or "")):
         method, where, delta, interpolation, relax = key
         if method != "current" or relax != SOLVER["kutta_relaxation"]:
             continue
+        dashed = interpolation == "linear"
         name = ("station K (production)" if where == "station" else
                 f"m* = m_TE - {100 * delta:g} % c, {interpolation}" + ("  [not every level]" if delta in p1["partial"] else ""))
         betas = [by_level[level]["beta_out_deg"] if level in by_level and by_level[level]["converged"] else None
                  for level in LEVELS]
-        series.append((where != "station", delta or 0.0, interpolation == "linear", name, betas))
-    series.sort(key=lambda s: (s[0], -s[1], s[2]))
-    plot_variants(ax, [(name, betas, dashed) for _, _, dashed, name, betas in series], dm)
+        k = hue[delta]
+        xs = [x for x, b in zip(dm, betas) if b is not None]
+        ax.plot(xs, [b for b in betas if b is not None], color=SERIES[k], linewidth=2.0, linestyle="--" if dashed else "-",
+                marker=MARKS[k], markersize=6, markerfacecolor=SURFACE if dashed else SERIES[k], markeredgewidth=1.4,
+                label=name)
+    ax.legend(fontsize=7.5, frameon=False, labelcolor=INK2, loc="lower left")
+    ax.annotate("solid: cubic in m, dashed: linear; very_fine at 5 % c did not converge in 600 passes",
+                (0.0, -0.17), xycoords="axes fraction", fontsize=7.5, color=INK2)
     fig.tight_layout()
     fig.savefig(OUT / "beta_out_vs_level_phase1.png", dpi=150, facecolor=SURFACE)
     plt.close(fig)
@@ -850,7 +855,9 @@ def phase4() -> None:
         xs = [x for x, b in zip(dm, betas) if b is not None]
         ax.plot(xs, [b for b in betas if b is not None], color=color, linewidth=2.0, linestyle="--" if dashed else "-",
                 marker=mark, markersize=6, markerfacecolor=SURFACE if dashed else color, markeredgewidth=1.4, label=name)
-    ax.legend(fontsize=7.5, frameon=False, labelcolor=INK2, loc="best")
+    ax.legend(fontsize=7.5, frameon=False, labelcolor=INK2, loc="lower left")
+    ax.annotate("current and aungier_13_57 coincide at every level (the orange curves cover the blue ones)",
+                (0.0, -0.17), xycoords="axes fraction", fontsize=7.5, color=INK2)
     fig.tight_layout()
     fig.savefig(OUT / "beta_out_vs_level_phase3.png", dpi=150, facecolor=SURFACE)
     plt.close(fig)

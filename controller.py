@@ -423,6 +423,8 @@ def format_case_summary(case: Case) -> str:
     row("mean line", s.meanline_type, _tag("meanline_type", s.meanline_type, spec_defaults))
     row("profile variant", s.profile_variant, _tag("profile_variant", s.profile_variant, spec_defaults))
     row("surface continuity", s.surface_continuity, note="C2: the solver's geometry")
+    row("thickness reconstruction", str(case.cascade.metadata.get("thickness_reconstruction")), "[derived]",
+        "CascadeSpec default: C2 quintic_natural_sqrt, C1 legacy pchip_sqrt")
     row("camber stations", repr(s.n_camber_stations), _tag("n_camber_stations", s.n_camber_stations, spec_defaults))
     row("chord c [m]", repr(s.chord))
     row("solidity sigma", repr(s.solidity))

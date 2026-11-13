@@ -9,7 +9,7 @@ angle for the Kutta condition in the same loop.
 >
 > | Module | State |
 > |---|---|
-> | `geometry.py` | reopened 2026-11-11 for the surface representation (`CascadeSpec.surface_continuity`). **C1 geometry — VALIDATED LEGACY BASELINE** (the default; unchanged, bit for bit). **C2 geometry — ROBUST LE IMPLEMENTED / UNDER VALIDATION** (quintic curves; within 1e-6 c of C1 downstream of the LE, a redesigned monotone-curvature leading edge ahead of it; not frozen, awaiting review of the LE plots) |
+> | `geometry.py` | reopened 2026-11-11 for the surface representation (`CascadeSpec.surface_continuity`). **C1 geometry — VALIDATED LEGACY BASELINE** (the default; unchanged, bit for bit). **Thickness reconstruction (2026-11-13, approved):** `CascadeSpec.thickness_reconstruction`, C2 default the natural quintic spline in √station (C4, exact at the table stations), C1 default the legacy PCHIP (`"pchip_sqrt"`, selectable for C2 too, the previous C2 bit for bit). **C2 geometry — ROBUST LE IMPLEMENTED / UNDER VALIDATION** (quintic curves; within 1e-6 c of C1 downstream of the LE, a redesigned monotone-curvature leading edge ahead of it; not frozen, awaiting review of the LE plots) |
 > | `grid.py` | C1 path: FROZEN geometric grid implementation, unchanged bit for bit (passage boundaries, both extensions, a continuous check that the smooth passage is open, uniform (m, η) nodes, blade-passage topology from the station lines, tracked wall identity, exit rebuild). **C2 path reopened 2026-11-11 — UNDER REVIEW, not frozen:** the walls are the authoritative curves (section 7 of its docstring). **Admissible n_passage added 2026-11-12 — UNDER REVIEW:** the first and last blade station must each cut one suction and one pressure surface (section 8): `make_grid(..., require_ss_ps=True)` and `validate_uniform_grid_topology` raise `GridTopologyError` (never repair), `find_valid_n_passage` and `n_passage_ceiling` are read-only queries; the default build is unchanged. **Geometry-driven standard grids added 2026-11-13 — UNDER REVIEW (section 9):** five named levels (`GRID_LEVELS`, very_coarse … very_fine), `build_grid(cascade, level)`, `build_grid_family(cascade)` → `GridPackage`, `GridSettings(level=...)` through `make_grid` and so the solver; the lattice is anchored to the blade's own SS + PS transitions, so admissibility belongs to the geometry, not to a lucky n_passage; structured `GridGenerationError`; the explicit n_passage path unchanged bit for bit |
 > | `metrics.py` | implemented: S, dS/dm, the grid-line angles of Eqs. 5-3, 5-9 and d tan β/dm. C1: finite differences, unchanged bit for bit. **C2 blade walls (2026-11-11) — UNDER REVIEW, not frozen:** exact spline slopes |
 > | `coefficients.py` | **implemented 2026-11-12 — UNDER REVIEW, not frozen:** A to E of Eq. 5-21 (Eqs. 5-22 to 5-26) from the metrics, a frozen ρ field and the mass flow per unit depth; planar, non-rotating (no right-hand side); the one physical length scale `c_ref` |
@@ -159,7 +159,7 @@ runs the study for the NACA 65-(12A10)10 (results in `outputs/grid_family_analys
 | Module | Responsibility | Defines |
 |---|---|---|
 | `config.py` | Every solver input except the geometry: grid size and extensions (in blade chords, one each side by default), operating point (relative inlet Mach number and angles in `_deg`; ABSOLUTE-frame inlet totals `inlet_absolute_total_pressure`, `inlet_absolute_total_temperature`; `angular_speed`; for rotating rows only `stream_surface_radius` and `inlet_absolute_tangential_velocity`), gas model, tolerances, iteration limits (no defaults; `velocity_tolerance` optional, None = `density_tolerance`), density relaxation (default 0.5 = `eos.DENSITY_RELAXATION`, our baseline; 1.0 = Aungier's direct replacement), Kutta relaxation (default 1.0 = `KUTTA_RELAXATION`, our baseline; Aungier gives no value) | `GridSettings`, `FlowConditions`, `IterationSettings`, `SolverConfig`, `KUTTA_RELAXATION` |
-| `geometry.py` | Builds a blade from a `CascadeSpec` (NACA 65 / A10 now; DCA and C4 raise `NotImplementedError`), sets it at stagger and pitch, finds the geometric throat, checks every invariant `grid.py` relies on. Optional physical chord as a uniform scale. `surface_continuity` "C1" (validated construction) or "C2" (quintic B-spline curves with a robust, monotone-curvature leading edge, sampled into the same arrays). No grid, no flow | `CascadeSpec`, `make_cascade(spec)`, `Cascade`, `CascadeCoordinates`, `BladeProfile`, `naca65_profile`, `validate_cascade`, `StreamSheet` (stub); C2: `ParametricBladeCurve`, `SurfaceCurves`, `naca65_reference_surfaces`, `ReferenceSurface`, `SmoothedSurface`, `LeadingEdgeNose`, `LeadingEdgeFair`, `fair_leading_edge`, `fit_c2_surface`, `C2SurfaceFit`, `leading_edge_fairness`, `fit_quintic_surface` (the previous C2 fit, kept for comparison), `signed_curvature`, `wall_slopes` |
+| `geometry.py` | Builds a blade from a `CascadeSpec` (NACA 65 / A10 now; DCA and C4 raise `NotImplementedError`), sets it at stagger and pitch, finds the geometric throat, checks every invariant `grid.py` relies on. Optional physical chord as a uniform scale. `surface_continuity` "C1" (validated construction) or "C2" (quintic B-spline curves with a robust, monotone-curvature leading edge, sampled into the same arrays). `thickness_reconstruction` between the table stations: "quintic_natural_sqrt" (the C2 default) or "pchip_sqrt" (legacy, the C1 default). No grid, no flow | `CascadeSpec`, `make_cascade(spec)`, `Cascade`, `CascadeCoordinates`, `BladeProfile`, `naca65_profile`, `validate_cascade`, `StreamSheet` (stub); C2: `ParametricBladeCurve`, `SurfaceCurves`, `naca65_reference_surfaces`, `ReferenceSurface`, `SmoothedSurface`, `LeadingEdgeNose`, `LeadingEdgeFair`, `fair_leading_edge`, `fit_c2_surface`, `C2SurfaceFit`, `leading_edge_fairness`, `fit_quintic_surface` (the previous C2 fit, kept for comparison), `signed_curvature`, `wall_slopes` |
 | `grid.py` | The side boundaries of one passage (blade walls, inlet and exit extensions), a check that the smooth passage is open over the whole blade, uniform stations in m with exact far ends, the blade stations as the station lines that cut the blade with the wall nodes on its passage-facing sides, the linear η map to nodes, regions; the exit extension follows the discharge angle. Coordinates only: no slopes or metrics | `PassageBoundaries`, `make_passage_boundaries`, `Grid`, `WallIdentity`, `WallSide`, `make_grid`, `rebuild_exit`, `GridError`; standard grids: `GRID_LEVELS`, `build_grid`, `build_grid_family`, `GridPackage`, `StandardGrid`, `StandardGridInfo`, `CandidateStatistics`, `PassageTransitions`, `passage_transitions`, `validate_standard_grid`, `geometry_identifier`, `GridGenerationError`; `node_index`, `node_theta` (stubs) |
 | `metrics.py` | Geometric fields of the transformed equations from a frozen `Grid` (Eqs. 5-1 to 5-3, 5-9): the passage spacing S and its m derivative, the boundary slopes tan β0, tan β1 and the grid-line angle β at every node. Pure geometry, planar (y = rθ), recomputed only when `rebuild_exit` moves the exit | `GridMetrics`, `build_metrics`, `MetricsError` |
 | `boundary_conditions.py` | The boundary nodes from the grid topology (masks: lower/upper wall, periodic lower/upper, upstream, downstream; corners in two) and the explicit relations Σ aₖψₖ = rhs of Aungier's conditions: walls ψ = 0 / 1, periodic jump ψ_upper − ψ_lower = 1 (0 for a periodic scalar), ψ_m = 0 at the far stations by second-order one-sided differences; eliminations (ψ₀ = 4/3 ψ₁ − 1/3 ψ₂) and the periodic continuation for the assembly. No matrix, no stencil, no Kutta | `BoundaryConditions`, `build_boundary_conditions`, `Relation`, `Term`, `Elimination`, `BoundaryConditionError`, `PSI_LOWER_WALL`, `PSI_UPPER_WALL`, `PSI_PERIODIC_JUMP` |
@@ -306,10 +306,12 @@ Choices that are ours, not the book's, or where the spec and the data disagreed.
   identical) and naca65's generator on 40 blades to 3.5e-18. Nothing imports naca65.
 - **Nominal thickness.** For NACA 65, `t_max_over_c` is the nominal ratio of the designation
   (0.10 for "...10"), and the corrected table is scaled by `t / 0.10`. So 0.10 keeps
-  Table 4-1 exactly, with its own maximum of 0.09992 at station 0.40; the table is not
-  renormalized to peak at 0.10000. The true maximum is `metadata["max_thickness_over_c"]`
-  (0.9992 t), and the thickness check of `validate_cascade` compares against it. An
-  earlier version scaled by `t / 0.09992`; it was changed on review.
+  Table 4-1 exactly at every station, with its largest ordinate 0.09992 at station 0.40; the
+  table is not renormalized to peak at 0.10000. The true maximum is
+  `metadata["max_thickness_over_c"]` (0.9992 t for the legacy PCHIP, 0.99961 t at station
+  0.4098 for the quintic: see the thickness reconstruction below), and the thickness check of
+  `validate_cascade` compares against it. An earlier version scaled by `t / 0.09992`; it was
+  changed on review.
 - **`CascadeSpec` is the one geometry input.** `make_cascade(spec)` is the only way to build
   a `Cascade`, and the modelling defaults (A10, Kovach-Sandercock, no physical chord,
   101 camber stations) live in `CascadeSpec` only; `naca65_profile` has none. `Cascade`
@@ -1529,6 +1531,62 @@ Choices that are ours, not the book's, or where the spec and the data disagreed.
     one function-level import of the standard-grid validation), `test_controller.py` and the
     diagnosis baseline (`grid_level=None`). Suite 1738 pass, none skipped.
   - Not done: no optimizer, no clustering, no change of the Kutta station or of D/E.
+- **Thickness reconstruction (2026-11-13, approved by the user; geometry.py only).** Table 4-1
+  gives the thickness at 26 stations; between them geometry.py interpolated the half-thickness
+  by PCHIP in z = √station. That is exact at the stations but only C1: h'' jumps at every
+  station, the C2 fit keeps each jump as a curvature ramp 0.008–0.02 c wide, and the C2 walls
+  carry a curvature sawtooth locked to the stations (0.165 /c RMS over x/c 0.20–0.85, the
+  |dκ/ds| peaks within ±0.0008 c of the stations) that the potential flow turns into the
+  suction-side Mach ripple at M₁ 0.65 (`scripts/audit_ss_sawtooth.py`, then
+  `scripts/audit_naca_thickness_reconstruction.py`, outputs/naca_thickness_reconstruction_audit/).
+  - The choice: `CascadeSpec.thickness_reconstruction`, `"quintic_natural_sqrt"` (the
+    interpolating quintic spline in z with h‴ = h⁗ = 0 at both ends, the interpolant of least
+    ∫h‴²; C4, exact at every station to 1.4e-17) or `"pchip_sqrt"` (the legacy PCHIP). None,
+    the default, takes `DEFAULT_THICKNESS_RECONSTRUCTION[surface_continuity]`: C1 keeps the
+    PCHIP, so the validated C1 baseline is unchanged bit for bit (fingerprint test; checked on
+    both variants, every field); C2 takes the quintic. C2 with `"pchip_sqrt"` is the previous
+    C2 bit for bit (both variants). C2 is now compared with C1 of the same reconstruction.
+    The cascade metadata carry `thickness_reconstruction`, `base_max_thickness` and its
+    station; the controller's case summary prints the reconstruction.
+  - Audit (65-(12A10)10, both variants): the quintic stays within 8.8e-5 c of the PCHIP
+    surfaces, removes 86 % of the curvature ripple, improves the LE fairness, peaks at
+    t/c 0.099961 at station 0.4098 (the quadratic through the three largest ordinates:
+    0.099956 at 0.409; PCHIP pins it to 0.09992 at 0.40) and is positive and single-peaked.
+    Cubic splines were rejected only for pressure-side LE-table roughness (×1.3–3.4), the
+    smoothing spline for not being exact.
+  - What it changes (measured): the C2 fits need fewer knots (kovach_sandercock SS / PS 533 /
+    576 → 400 / 443, emery_base 574 / 622 → 373 / 419), no table-station transition is left
+    (only the LE fair, the Kovach start and TE, the emery_base closing segment); the Kovach
+    start corner falls from 0.077° to 0.0073°. The front-60 % D error of coefficients.py
+    against the exact derivative falls 4 to 12 times (0.66 → 0.15 at n_passage 101, 0.069 →
+    0.0056 at 801) and converges at about second order (ratio 3.6 per halving). The robust
+    LE moves more of the thin 0.4 / 0.04 blade's nose (LE zone 8.2e-4 → 1.19e-3 c from C1:
+    its pressure-side anchor moves from 0.00716 to 0.00771 c of arc). Solver, M₁ 0.65, the
+    five-level family of kovach_sandercock (the production blade, whose aft is the Kovach
+    taper from station 0.60 and so never sees the reconstruction): β_out 25.479°, 24.372°,
+    23.571°, 22.683°, 23.282° (unchanged within 0.001°; the grid drift is not the geometry),
+    passes 116 … 254 as before, suction peak 0.904, 0.902, 0.901, 0.901, 0.900 (before 0.904,
+    0.904, 0.905, 0.904, 0.903: the sawtooth inflated the peak on the finer grids); emery_base
+    (the audit's what-if): suction-wall Mach ripple −68 % at medium, β_out −0.02 to −0.04° on
+    all five levels. Low-Mach verification case: coupled angle 23.50220° → 23.50024°, fixed-angle
+    R_K 48.346 → 48.329 m/s.
+  - Tests: `test_geometry.py` gains the reconstruction tests (exact at the stations and the
+    maxima for both, C4 against C1 at the knots, metadata, refusal of unknown names, the spec
+    default) and runs the shared C1 construction (vertices on the analytic reference,
+    derivatives against central differences, circles and junctions, SmoothedSurface, the C2
+    ramps) for both reconstructions. Moved locks, each with old value, new value and the
+    reason in its docstring: test_geometry (LE zone 1e-3 → 1.25e-3 for the measured
+    1.19e-3; Kovach start corner by reconstruction), test_coefficients (D/E bounds tightened
+    to the new measurements, the default case's β 79.248° → 79.164°), test_discretization
+    (stencil fingerprint, LE-row rhs, corner count 101 → 100 at 401), test_grid (nose-tip
+    gap, ceilings 575 / 319 → 576 / 320 at 13° / 23°, the passage check stated as the upper
+    estimate its docstring promises: 4.1e-8 c above the independent search, 1e-9 only because
+    a piece end sat at the PCHIP blade's widest cut), test_grid_family (nose windows),
+    test_metrics (LE angle 79.248° → 79.164°), test_solver (R_K, the coupled angle; the
+    sonic-off test moves to M₁ 0.72, because 0.70 no longer reaches T ≤ 0 on the quintic
+    geometry). `test_naca_thickness_reconstruction.py` builds A_pchip and C_quintic_natural
+    through `CascadeSpec` and registers the diagnostic candidates under their own names. The
+    C1 fingerprint and every C1 lock are untouched. Suite 1772 pass, none skipped.
 
 ## Looking at the geometry
 
@@ -1637,16 +1695,16 @@ t/c and cl0. `--save DIR` writes the PNGs (`outputs/le_fairing/`, gitignored).
 
 Each test file's docstring lists its checks, and each check compares against something the
 module does not depend on: a closed form, a hand calculation, a book equation or separate
-code. `test_geometry.py` (202 tests), `test_config.py` (12), `test_grid.py` (675),
+code. `test_geometry.py` (227 tests), `test_config.py` (12), `test_grid.py` (675),
 `test_metrics.py` (174), `test_coefficients.py` (54), `test_discretization.py` (110),
 `test_boundary_conditions.py` (52), `test_matrix_assembly.py` (60) and
 `test_linear_solver.py` (34), `test_flow.py` (29), `test_eos.py` (69), `test_kutta.py` (16),
 `test_solver.py` (39), `test_postprocess.py` (14), `test_monitor.py` (9), `test_controller.py` (13) and
-`test_diagnose_script.py` (10, helpers only), `test_grid_family.py` (23) and `test_grid_family_script.py` (2, no
-solve) run; no test
+`test_diagnose_script.py` (10, helpers only), `test_grid_family.py` (23), `test_grid_family_script.py` (2, no
+solve) and `test_naca_thickness_reconstruction.py` (8, the audit script's helpers and one very_coarse solve) run; no test
 file skips itself any more.
 The plot and monitor tests use Matplotlib's Agg backend: no window opens.
 
 ```text
-python -m pytest tests/test_config.py tests/test_geometry.py tests/test_grid.py tests/test_metrics.py tests/test_coefficients.py tests/test_discretization.py tests/test_boundary_conditions.py tests/test_matrix_assembly.py tests/test_linear_solver.py tests/test_flow.py tests/test_eos.py tests/test_kutta.py tests/test_solver.py tests/test_postprocess.py tests/test_monitor.py tests/test_controller.py tests/test_diagnose_script.py tests/test_grid_family.py tests/test_grid_family_script.py
+python -m pytest tests/test_config.py tests/test_geometry.py tests/test_grid.py tests/test_metrics.py tests/test_coefficients.py tests/test_discretization.py tests/test_boundary_conditions.py tests/test_matrix_assembly.py tests/test_linear_solver.py tests/test_flow.py tests/test_eos.py tests/test_kutta.py tests/test_solver.py tests/test_postprocess.py tests/test_monitor.py tests/test_controller.py tests/test_diagnose_script.py tests/test_grid_family.py tests/test_grid_family_script.py tests/test_naca_thickness_reconstruction.py
 ```

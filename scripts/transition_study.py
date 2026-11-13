@@ -696,7 +696,77 @@ def phaseC() -> None:
     write_lines("phaseC.md")
 
 
-PHASES = {"phaseA": phaseA, "phaseB": phaseB, "phaseC": phaseC}
+# --- Phase D: figures --------------------------------------------------------------------------------------------
+
+def phaseD() -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    A_, B_, C_ = load("phaseA.json"), load("phaseB.json"), load("phaseC.json")
+    style, SERIES, MARKS, SURFACE, INK2, MUTED = ks.style, ks.SERIES, ks.MARKS, ks.SURFACE, ks.INK2, ks.MUTED
+    rows = A_["rows"]
+    dm = np.array([r["dm_over_c"] for r in rows])
+    # 1: dGamma against dm (log-log)
+    fig, ax = plt.subplots(figsize=(8.2, 4.8), facecolor=SURFACE)
+    style(ax, "Phase A: Stokes defect at the transitions against dm (absolute values; open marker = negative)")
+    for k, (key, name) in enumerate((("te_last3", "TE: last 3 blade elements"), ("te_jump", "TE: jump l -> l+1"),
+                                     ("dGamma_TE", "dGamma_TE (sum)"), ("le_jump", "LE: jump f-1 -> f"),
+                                     ("le_first3", "LE: first 3 blade elements"), ("dGamma_LE", "dGamma_LE (sum)"))):
+        v = np.array([r[key] for r in rows])
+        ax.loglog(dm, np.abs(v), color=SERIES[k], linewidth=2.0, linestyle="-" if "sum" in name else "--", label=name)
+        for x, y in zip(dm, v):
+            ax.plot(x, abs(y), marker=MARKS[k], markersize=7, color=SERIES[k], markeredgewidth=1.4,
+                    markerfacecolor=SERIES[k] if y > 0 else SURFACE)
+    ax.loglog(dm, np.array([r["interior_median_abs"] for r in rows]), color=MUTED, linewidth=1.2,
+              label="median |defect|, interior blade elements")
+    ax.set_xlabel("dm / c")
+    ax.set_ylabel("|LHS - RHS_cos|  [m/s x chord]")
+    ax.invert_xaxis()
+    ax.legend(fontsize=7.2, frameon=False, labelcolor=INK2)
+    fig.tight_layout()
+    fig.savefig(OUT / "dgamma_vs_dm.png", dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+    # 2: residual by row class against dm (log-log), expanded (solid) and flux (dashed), gamma 33
+    classes = ("f-1", "f", "f+1", "l-1", "l", "l+1", "blade near LE (f+2 .. 0.1 c)", "blade middle",
+               "periodic far")
+    fig, ax = plt.subplots(figsize=(9.4, 5.6), facecolor=SURFACE)
+    style(ax, "Phases B, C: max |raw residual| on the uniform flow (gamma 33 deg); solid expanded, dashed flux")
+    colours = SERIES + ("#6250d6", "#e34948", ks.INK)
+    for k, cls in enumerate(classes):
+        for form_rows, dashed in ((B_["rows"], False), (C_["rows"], True)):
+            r = next(x for x in form_rows if x["gamma_deg"] == 33.0 and x["row_class"] == cls and x["term"] == "full")
+            v = [r[f"max_{level}"] for level in LEVELS]
+            ax.loglog(dm, v, color=colours[k], linewidth=2.0 if not dashed else 1.4, linestyle="--" if dashed else "-",
+                      marker=MARKS[k % len(MARKS)], markersize=5, markerfacecolor=SURFACE if dashed else colours[k],
+                      label=None if dashed else f"{cls}  (p = {r['order_max']:.2f})")
+    ref = dm ** 2 / dm[0] ** 2 * 1e-4
+    ax.loglog(dm, ref, color=MUTED, linewidth=1.0, linestyle=":", label="slope dm^2 (a consistent row)")
+    ax.set_xlabel("dm / c")
+    ax.set_ylabel("max |raw residual|")
+    ax.invert_xaxis()
+    ax.legend(fontsize=7, frameon=False, labelcolor=INK2, loc="center left", bbox_to_anchor=(1.0, 0.5))
+    fig.tight_layout()
+    fig.savefig(OUT / "residual_by_class_vs_dm.png", dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+    # 3: beta_out by level: expanded, and expanded minus dbeta_est (flux solves not run: the Phase C gate failed)
+    fig, ax = plt.subplots(figsize=(8.2, 4.8), facecolor=SURFACE)
+    ks.beta_axis(ax, "beta_out against the grid: expanded, and expanded - dbeta_est (Phase A)")
+    ax.plot(dm, [r["beta_out_deg"] for r in rows], color=SERIES[0], linewidth=2.0, marker="o", markersize=6,
+            label="expanded (production), station Kutta")
+    ax.plot(dm, [r["beta_corrected_deg"] for r in rows], color=SERIES[1], linewidth=2.0, linestyle="--", marker="s",
+            markersize=6, markerfacecolor=SURFACE, markeredgewidth=1.4, label="expanded - dbeta_est (TE defect removed)")
+    ax.legend(fontsize=7.5, frameon=False, labelcolor=INK2, loc="lower left")
+    ax.annotate("flux: no coupled solve was run (its transition rows did not decay on the manufactured field, Phase C)",
+                (0.0, -0.17), xycoords="axes fraction", fontsize=7.5, color=INK2)
+    fig.tight_layout()
+    fig.savefig(OUT / "beta_out_vs_level.png", dpi=150, facecolor=SURFACE)
+    plt.close(fig)
+    print("wrote dgamma_vs_dm.png, residual_by_class_vs_dm.png, beta_out_vs_level.png")
+
+
+PHASES = {"phaseA": phaseA, "phaseB": phaseB, "phaseC": phaseC, "phaseD": phaseD}
 
 
 def main() -> None:

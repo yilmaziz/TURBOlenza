@@ -161,6 +161,7 @@ from turbolenza.b2b.flow import (FlowField, InletState, InletStateError, inlet_s
 from turbolenza.b2b.geometry import Cascade
 from turbolenza.b2b.grid import Grid, make_grid, rebuild_exit, validate_uniform_grid_topology
 from turbolenza.b2b.linear_solver import LinearSolveResult, solve_linear_system
+from turbolenza.b2b.discretization import TRANSITION_FORMS
 from turbolenza.b2b.matrix_assembly import assemble_from_coefficients
 from turbolenza.b2b.metrics import GridMetrics, build_metrics
 from turbolenza.b2b.monitor import MonitorWarning, SolveInfo
@@ -316,6 +317,7 @@ class _Context:
     kutta_eval_offset_chords: float | None = None
     kutta_eval_interpolation: str = "cubic"
     kutta_method: str = "current"           # config.iteration.kutta_method (study option; kutta.py section 8)
+    transition_form: str = "expanded"       # config.iteration.transition_form (study option; discretization.py)
 
 
 @dataclass(frozen=True)
@@ -582,7 +584,8 @@ def _context(grid: Grid, config: SolverConfig, mass_flow_per_depth: float, c_ref
                     blade=slice(grid.first_blade_i, grid.last_blade_i + 1), inlet=inlet, mass_flow_source=source,
                     stop_at_sonic=bool(iteration.stop_at_sonic), kutta_eval=iteration.kutta_eval,
                     kutta_eval_offset_chords=iteration.kutta_eval_offset_chords,
-                    kutta_eval_interpolation=iteration.kutta_eval_interpolation, kutta_method=iteration.kutta_method)
+                    kutta_eval_interpolation=iteration.kutta_eval_interpolation, kutta_method=iteration.kutta_method,
+                    transition_form=iteration.transition_form)
 
 
 def _check_kutta_options(iteration) -> None:
@@ -599,6 +602,8 @@ def _check_kutta_options(iteration) -> None:
                                    f"{kutta.KUTTA_INTERPOLATIONS}")
     if iteration.kutta_method not in kutta.KUTTA_METHODS:
         raise SolverInputError(f"kutta_method = {iteration.kutta_method!r}: one of {kutta.KUTTA_METHODS}")
+    if iteration.transition_form not in TRANSITION_FORMS:
+        raise SolverInputError(f"transition_form = {iteration.transition_form!r}: one of {TRANSITION_FORMS}")
 
 
 def _mass_flow(grid: Grid, config: SolverConfig, given, c_ref: float) -> tuple[InletState | None, float, str]:
@@ -651,7 +656,11 @@ def _at_angle(start: Grid, angle: float, base: _Context) -> tuple[Grid, _Context
 def _density_pass(rho: NDArray[np.float64], context: _Context) -> _Pass:
     """Steps 3 to 7 with the resident density rho (module docstring): calls only."""
     co = build_coefficients(context.metrics, rho, context.mass_flow_per_depth, c_ref=context.c_ref)
-    assembly = assemble_from_coefficients(co, context.metrics, context.boundary_conditions)
+    if context.transition_form == "expanded":
+        assembly = assemble_from_coefficients(co, context.metrics, context.boundary_conditions)
+    else:                                       # study option (discretization.py): face-flux transition rows
+        assembly = assemble_from_coefficients(co, context.metrics, context.boundary_conditions,
+                                              transition_form=context.transition_form)
     linear = solve_linear_system(assembly)
     flow = velocity_components(linear.psi, rho, co, context.metrics, context.boundary_conditions)
     state = eos.static_state_from_velocity(flow.W, context.gas, context.reference)

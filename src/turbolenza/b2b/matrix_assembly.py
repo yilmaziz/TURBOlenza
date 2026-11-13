@@ -102,8 +102,8 @@ from numpy.typing import NDArray
 from turbolenza.b2b.boundary_conditions import (DOWNSTREAM, LOWER_WALL, PERIODIC, UPPER_WALL, UPSTREAM,
                                                        BoundaryConditions, Elimination, Relation)
 from turbolenza.b2b.coefficients import CoefficientFields
-from turbolenza.b2b.discretization import (InteriorStencil, PeriodicPDERow, build_interior_stencil,
-                                                  build_periodic_pde_rows)
+from turbolenza.b2b.discretization import (TRANSITION_FORMS, InteriorStencil, PeriodicPDERow, build_interior_stencil,
+                                                  build_periodic_pde_rows, transition_flux_weights)
 from turbolenza.b2b.metrics import GridMetrics
 
 Node = tuple[int, int]
@@ -192,7 +192,8 @@ def node_of(k, shape: tuple[int, int]):
 
 # --- assembly ---------------------------------------------------------------------------------
 
-def assemble_system(stencil: InteriorStencil, periodic_rows, boundary_conditions: BoundaryConditions) -> AssemblyResult:
+def assemble_system(stencil: InteriorStencil, periodic_rows, boundary_conditions: BoundaryConditions,
+                    weight_override: NDArray[np.float64] | None = None) -> AssemblyResult:
     """F Psi = Q from the production local equations of one grid: the Eq. 5-44 rows of stencil
     (discretization.build_interior_stencil), the periodic PDE rows (build_periodic_pde_rows) and
     the relations of boundary_conditions, with the far stations eliminated (module docstring).
@@ -245,6 +246,16 @@ def assemble_system(stencil: InteriorStencil, periodic_rows, boundary_conditions
     # the Eq. 5-44 rows, vectorized: nine entries per interior node
     owners_i, owners_j = np.nonzero(interior)
     weights = np.asarray(stencil.weights)[owners_i, owners_j]                     # (n_int, 3, 3)
+    if weight_override is not None:             # study option (discretization.transition_flux_weights): whole rows
+        override = np.asarray(weight_override, dtype=float)
+        if override.shape != shape + (3, 3):
+            raise MatrixAssemblyError(f"weight_override has shape {override.shape}, expected {shape + (3, 3)}")
+        given = np.all(np.isfinite(override), axis=(2, 3))
+        if np.any(given & ~interior):
+            raise MatrixAssemblyError("weight_override replaces a row that is not an interior Eq. 5-44 row")
+        replace_rows = given[owners_i, owners_j]
+        weights = np.array(weights)
+        weights[replace_rows] = override[owners_i[replace_rows], owners_j[replace_rows]]
     n_int = owners_i.size
     ent_i = np.concatenate([owners_i + di for di, dj in _OFFSETS])
     ent_j = np.concatenate([owners_j + dj for di, dj in _OFFSETS])
@@ -256,12 +267,19 @@ def assemble_system(stencil: InteriorStencil, periodic_rows, boundary_conditions
 
 
 def assemble_from_coefficients(coefficients: CoefficientFields, metrics: GridMetrics,
-                               boundary_conditions: BoundaryConditions) -> AssemblyResult:
+                               boundary_conditions: BoundaryConditions, transition_form: str = "expanded") -> AssemblyResult:
     """build_interior_stencil, build_periodic_pde_rows and assemble_system in one call, for the
-    solver's density loop; nothing else."""
+    solver's density loop; nothing else. transition_form "flux" (a study option,
+    discretization.py) replaces the interior rows of the four transition stations by the
+    face-flux rows; "expanded" (the default) is the production system."""
     stencil = build_interior_stencil(coefficients, metrics)
     rows = build_periodic_pde_rows(coefficients, metrics, boundary_conditions)
-    return assemble_system(stencil, rows, boundary_conditions)
+    if transition_form == "expanded":
+        return assemble_system(stencil, rows, boundary_conditions)
+    if transition_form != "flux":
+        raise MatrixAssemblyError(f"unknown transition_form {transition_form!r}; expected one of {TRANSITION_FORMS}")
+    override, _ = transition_flux_weights(coefficients, metrics)
+    return assemble_system(stencil, rows, boundary_conditions, weight_override=override)
 
 
 def assemble_local_equations(shape: tuple[int, int], equations, eliminations=(), implied=()) -> AssemblyResult:

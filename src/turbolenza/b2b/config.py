@@ -140,6 +140,9 @@ class IterationSettings:
     kutta_eval: str = "station"                     # "station" | "fixed_m" (m* = m_TE - offset * chord)
     kutta_eval_offset_chords: float | None = None   # "fixed_m" only: the offset of m* ahead of m_TE, chords
     kutta_eval_interpolation: str = "cubic"         # "fixed_m" only: "cubic" | "linear" along each wall in m
+    transition_form: str = "expanded"               # study option (discretization.py, 2026-11-14): "expanded" (the
+                                                    # production rows) | "flux" (face-flux rows at the four transition
+                                                    # stations, no explicit D, E)
     kutta_method: str = "current"                   # "current" | "aungier_13_57" | "aungier_13_57_58" (kutta.py
                                                     # section 8); the Aungier methods take kutta_relaxation as their
                                                     # alpha, any finite alpha > 0 ("current" keeps 0 < lambda_K <= 1)

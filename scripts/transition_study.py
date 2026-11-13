@@ -493,7 +493,210 @@ def phaseB() -> None:
     write_lines("phaseB.md")
 
 
-PHASES = {"phaseA": phaseA, "phaseB": phaseB}
+# --- Phase C: the face-flux transition rows ---------------------------------------------------------------------
+
+TRANSITION_CLASSES = ("f-1", "f", "l", "l+1")       # the rows "flux" replaces (interior j of these stations)
+
+
+def flux_raw_everywhere(A, B, C, dm, deta):
+    """The raw face-flux weights at every interior node, (n_m, n_eta, 3, 3), vectorized (the
+    production function builds them per node at the transition rows only; checked equal there)."""
+    n_m, n_eta = A.shape
+    w = np.full((n_m, n_eta, 3, 3), np.nan)
+    I, Jn = slice(1, n_m - 1), slice(1, n_eta - 1)
+    P = (I, Jn)
+    up, dn = (I, slice(2, n_eta)), (I, slice(0, n_eta - 2))
+    rt, lt = (slice(2, n_m), Jn), (slice(0, n_m - 2), Jn)
+    a_p, a_m = 0.5 * (A[P] + A[up]), 0.5 * (A[P] + A[dn])
+    c_p, c_m = 0.5 * (C[P] + C[rt]), 0.5 * (C[P] + C[lt])
+    be_p, be_m = 0.5 * (B[P] + B[up]), 0.5 * (B[P] + B[dn])
+    bm_p, bm_m = 0.5 * (B[P] + B[rt]), 0.5 * (B[P] + B[lt])
+    h, k = deta, dm
+    q = 1.0 / (4.0 * h * k)
+    w[P + (1, 1)] = -(a_p + a_m) / h ** 2 - (c_p + c_m) / k ** 2
+    w[P + (1, 2)] = a_p / h ** 2 - (bm_p - bm_m) * q
+    w[P + (1, 0)] = a_m / h ** 2 + (bm_p - bm_m) * q
+    w[P + (2, 1)] = c_p / k ** 2 - (be_p - be_m) * q
+    w[P + (0, 1)] = c_m / k ** 2 + (be_p - be_m) * q
+    w[P + (2, 2)] = -(be_p + bm_p) * q
+    w[P + (0, 2)] = (be_p + bm_m) * q
+    w[P + (2, 0)] = (be_m + bm_p) * q
+    w[P + (0, 0)] = -(be_m + bm_m) * q
+    return w
+
+
+def apply_raw(w, psi):
+    n_m, n_eta = psi.shape
+    out = np.full((n_m, n_eta), np.nan)
+    for di in range(3):
+        for dj in range(3):
+            part = w[1:-1, 1:-1, di, dj] * psi[di:n_m - 2 + di, dj:n_eta - 2 + dj]
+            out[1:-1, 1:-1] = part if (di, dj) == (0, 0) else out[1:-1, 1:-1] + part
+    return out
+
+
+def central_DE(A, B, C, dm, deta):
+    """D = A_eta - B_m and E = C_m - B_eta by central differences at the interior nodes (the
+    interior formula of coefficients.py), zero on the edge rows (never read by an interior row)."""
+    D, E = np.zeros_like(A), np.zeros_like(A)
+    D[1:-1, 1:-1] = (A[1:-1, 2:] - A[1:-1, :-2]) / (2 * deta) - (B[2:, 1:-1] - B[:-2, 1:-1]) / (2 * dm)
+    E[1:-1, 1:-1] = (C[2:, 1:-1] - C[:-2, 1:-1]) / (2 * dm) - (B[1:-1, 2:] - B[1:-1, :-2]) / (2 * deta)
+    return D, E
+
+
+def reduction_check() -> list:
+    """Where the face-flux row equals the expanded row: synthetic coefficient fields on the
+    very_fine grid's shape and spacings, then the real fields with the uniform-flow psi."""
+    from turbolenza.b2b import discretization as dz
+
+    grid, met, bcs, co = manufactured_case("very_fine")
+    n_m, n_eta = len(grid.m), len(grid.eta)
+    dm, deta = co.length_scale * grid.dm, grid.deta
+    ii, jj = np.meshgrid(np.arange(n_m, dtype=float), np.arange(n_eta, dtype=float), indexing="ij")
+    psi_lin = 0.3 * ii * dm + 0.7 * jj * deta
+    psi_q = (ii * dm) ** 2 + 0.5 * (jj * deta) ** 2 + 0.2 * ii * dm * jj * deta
+    cases = {
+        "constant A, B, C": (2.0 + 0 * ii, 0.7 + 0 * ii, 1.3 + 0 * ii),
+        "linear A, C; constant B": (2.0 + 0.01 * ii + 0.02 * jj, 0.7 + 0 * ii, 1.3 + 0.03 * ii - 0.01 * jj),
+        "linear A, B, C": (2.0 + 0.01 * ii + 0.02 * jj, 0.7 + 0.005 * ii + 0.004 * jj, 1.3 + 0.03 * ii - 0.01 * jj),
+        "quadratic A, B, C": (2.0 + 1e-4 * ii ** 2 + 2e-4 * jj ** 2, 0.7 + 1e-4 * ii * jj, 1.3 + 3e-4 * ii ** 2),
+    }
+    rows = []
+    for name, (A, B, C) in cases.items():
+        D, E = central_DE(A, B, C, dm, deta)
+        st = dz._interior_stencil(A, B, C, D, E, dm, deta)
+        w_exp = np.asarray(st.weights) * -np.asarray(st.H)[..., None, None]
+        w_flux = flux_raw_everywhere(A, B, C, dm, deta)
+        inner = np.zeros((n_m, n_eta), bool)
+        inner[2:-2, 2:-2] = True                       # D, E central need a neighbour each side
+        scale = np.nanmax(np.abs(w_exp[inner]))
+        rows.append(dict(case=name, max_weight_difference_rel=float(np.nanmax(np.abs(w_flux - w_exp)[inner]) / scale),
+                         residual_difference_linear_psi=float(np.nanmax(np.abs(apply_raw(w_flux - w_exp, psi_lin)[inner]))),
+                         residual_difference_quadratic_psi=float(np.nanmax(np.abs(apply_raw(w_flux - w_exp, psi_q)[inner])))))
+    # the production per-node function against the vectorized one, at the transition rows
+    A, B, C = np.asarray(co.A), np.asarray(co.B), np.asarray(co.C)
+    H = 2 * A / deta ** 2 + 2 * C / dm ** 2
+    prod, nodes = dz._flux_transition_weights(A, B, C, dm, deta, grid.first_blade_i, grid.last_blade_i, H)
+    vec = flux_raw_everywhere(A, B, C, dm, deta) / -H[..., None, None]
+    same = max(float(np.max(np.abs(prod[i, j] - vec[i, j]))) for i, j in nodes)
+    rows.append(dict(case="production transition_flux_weights vs this script's vectorized form (very_fine)",
+                     max_weight_difference_rel=same))
+    return rows
+
+
+def real_interior_gap() -> list:
+    """|flux row - expanded row| on the uniform-flow psi at every interior node of the real
+    fields, by row class and level (gamma 33 deg): how far the flux form is from the expanded one
+    where both are meant to hold."""
+    from turbolenza.b2b import discretization as dz
+
+    out = []
+    for level in LEVELS:
+        grid, met, bcs, co = manufactured_case(level)
+        A, B, C, D, E = (np.asarray(getattr(co, k)) for k in "ABCDE")
+        dm, deta = co.length_scale * grid.dm, grid.deta
+        psi = uniform_psi(grid, 33.0)
+        st = dz._interior_stencil(A, B, C, D, E, dm, deta)
+        r_exp = apply_raw(np.asarray(st.weights) * -np.asarray(st.H)[..., None, None], psi)
+        r_flux = apply_raw(flux_raw_everywhere(A, B, C, dm, deta), psi)
+        masks = row_classes(grid)
+        row = dict(level=level, dm_over_c=grid.dm / grid.chord)
+        for cls in ("blade middle", "periodic far", "blade near LE (f+2 .. 0.1 c)", "blade near TE (0.1 c .. l-2)"):
+            d = np.abs(r_flux - r_exp)[masks[cls]]
+            row[f"gap {cls}"] = float(np.nanmax(d))
+            row[f"flux residual {cls}"] = float(np.nanmax(np.abs(r_flux[masks[cls]])))
+            row[f"expanded residual {cls}"] = float(np.nanmax(np.abs(r_exp[masks[cls]])))
+        out.append(row)
+    return out
+
+
+def corner_attribution() -> list:
+    """How much of the transition-row residual the eta-line corner explains: at row (i, j), i in
+    {f-1, f, l, l+1}, the node across the transition is off the quadratic extrapolation of the
+    row's own side of the eta line by delta_j; with psi = (y - m tan gamma) / pitch that puts
+    C delta_j / (pitch dm^2) into C psi_mm (and nothing into A psi_ee). Compared with the full raw
+    residual at the same rows (gamma 33 deg)."""
+    out = []
+    for level in LEVELS:
+        grid, met, bcs, co = manufactured_case(level)
+        psi = uniform_psi(grid, 33.0)
+        full = term_split(co, grid, bcs, psi)["full"][0]
+        y = np.asarray(grid.nodes, float)[..., 1]
+        C = np.asarray(co.C)
+        dm = co.length_scale * grid.dm
+        f, l, J = grid.first_blade_i, grid.last_blade_i, len(grid.eta) - 1
+        js = np.arange(1, J)
+        row = dict(level=level, dm_over_c=grid.dm / grid.chord)
+        for name, i, across, own in (("f-1", f - 1, f, (f - 1, f - 2, f - 3)), ("f", f, f - 1, (f, f + 1, f + 2)),
+                                     ("l", l, l + 1, (l, l - 1, l - 2)), ("l+1", l + 1, l, (l + 1, l + 2, l + 3))):
+            a, b, c3 = own
+            delta = y[across, js] - (3 * y[a, js] - 3 * y[b, js] + y[c3, js])
+            predicted = C[i, js] * delta / (grid.pitch * dm ** 2)
+            actual = full[i, js]
+            k = int(np.argmax(np.abs(actual)))
+            row[f"{name} delta/c"] = float(np.max(np.abs(delta))) / grid.chord
+            row[f"{name} predicted"] = float(predicted[k])
+            row[f"{name} actual"] = float(actual[k])
+            row[f"{name} ratio"] = float(predicted[k] / actual[k])
+        out.append(row)
+    return out
+
+
+def phaseC() -> None:
+    say("## Phase C: face-flux transition rows (transition_form = \"flux\"), on the manufactured field")
+    say()
+    say("Rows replaced: the interior rows j = 1 .. J-1 of the stations f-1, f, l, l+1 (no others; the periodic-line "
+        "rows (f-1, J) and (l+1, J) stay as they are). Face coefficients: the mean of the two nodes.")
+    say()
+    red = reduction_check()
+    table(red, [("case", "coefficients"), ("max_weight_difference_rel", "max |w_flux - w_exp| / max |w_exp|"),
+                ("residual_difference_linear_psi", "row difference on a linear psi"),
+                ("residual_difference_quadratic_psi", "row difference on a quadratic psi")],
+          "Does the face-flux row reduce to the expanded row? (synthetic fields, very_fine shape, interior nodes)", digits=3)
+    gap = real_interior_gap()
+    table(gap, [("level", "level"), ("dm_over_c", "dm/c"),
+                ("gap blade middle", "|flux - exp| blade middle"), ("expanded residual blade middle", "exp residual"),
+                ("gap periodic far", "|flux - exp| periodic far"), ("expanded residual periodic far", "exp residual"),
+                ("gap blade near LE (f+2 .. 0.1 c)", "|flux - exp| near LE"),
+                ("gap blade near TE (0.1 c .. l-2)", "|flux - exp| near TE")],
+          "The two forms on the real fields where neither is replaced (uniform-flow psi, gamma 33 deg, max over the class)",
+          digits=3)
+    results = operator_study("flux")
+    rows = report_operator(results, "flux", "flux at f-1, f, l, l+1")
+    expanded = {(r["gamma_deg"], r["row_class"], r["term"]): r for r in load("phaseB.json")["rows"]}
+    cmp_rows = []
+    for gamma in GAMMAS_DEG:
+        for cls in TRANSITION_CLASSES + ("f+1", "l-1", "interior"):
+            e, f_ = expanded[(gamma, cls, "full")], next(r for r in rows if r["gamma_deg"] == gamma and r["row_class"] == cls
+                                                         and r["term"] == "full")
+            cmp_rows.append(dict(gamma_deg=gamma, row_class=cls, expanded_very_fine=e["max_very_fine"],
+                                 flux_very_fine=f_["max_very_fine"], expanded_order=e["order_max"],
+                                 flux_order=f_["order_max"]))
+    table(cmp_rows, [("gamma_deg", "gamma"), ("row_class", "row class"), ("expanded_very_fine", "expanded, very_fine"),
+                     ("flux_very_fine", "flux, very_fine"), ("expanded_order", "expanded order"),
+                     ("flux_order", "flux order")], "Expanded against flux: max |raw residual| and its order", digits=3)
+    decays = all(r["flux_order"] > 0.0 for r in cmp_rows if r["row_class"] in TRANSITION_CLASSES)
+    say(f"Do the transition-row residuals decay with dm under \"flux\" (order > 0 for f-1, f, l, l+1 at every gamma)? "
+        f"{'YES' if decays else 'NO'}.")
+    say()
+    attribution = corner_attribution()
+    cols = [("level", "level"), ("dm_over_c", "dm/c")]
+    for name in TRANSITION_CLASSES:
+        cols += [(f"{name} delta/c", f"{name}: max |delta|/c"), (f"{name} predicted", f"{name}: C delta/(s dm^2)"),
+                 (f"{name} actual", f"{name}: residual"), (f"{name} ratio", f"{name}: ratio")]
+    table(attribution, cols, "The eta-line corner at the transitions: the node across the transition off the "
+          "extrapolation of the row's own side by delta (expanded rows, gamma 33 deg; at each station's row of "
+          "largest residual)", digits=4)
+    save("phaseC_attribution.json", attribution)
+    write_csv("phaseC_corner_attribution.csv", attribution)
+    write_csv("phaseC_operator_residuals.csv", rows)
+    write_csv("phaseC_reduction_check.csv", red)
+    write_csv("phaseC_interior_gap.csv", gap)
+    save("phaseC.json", dict(rows=rows, comparison=cmp_rows, reduction=red, interior_gap=gap, decays=decays))
+    write_lines("phaseC.md")
+
+
+PHASES = {"phaseA": phaseA, "phaseB": phaseB, "phaseC": phaseC}
 
 
 def main() -> None:

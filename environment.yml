@@ -1,0 +1,20 @@
+# Conda environment for TURBOlenza.
+#
+#   conda env create -f environment.yml
+#   conda activate turbolenza
+#   pip install -e . --no-deps
+#
+# The pins are the versions and channel (Anaconda defaults, MKL BLAS, win-64) in which the test
+# suite and its bit-for-bit regression values were last run, 2026-11-13. A fresh solve may pick
+# other builds of the same versions (it did for scipy and mkl on 2026-11-13). Other versions,
+# channels or BLAS builds should work, but may change results in the last bits.
+name: turbolenza
+channels:
+  - defaults
+dependencies:
+  - python=3.11.15
+  - numpy=2.4.4
+  - scipy=1.17.1
+  - matplotlib=3.10.8
+  - pytest
+  - pip

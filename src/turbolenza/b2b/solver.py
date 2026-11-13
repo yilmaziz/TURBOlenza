@@ -315,6 +315,7 @@ class _Context:
     kutta_eval: str = "station"             # config.iteration.kutta_eval (study option; kutta.py section 7)
     kutta_eval_offset_chords: float | None = None
     kutta_eval_interpolation: str = "cubic"
+    kutta_method: str = "current"           # config.iteration.kutta_method (study option; kutta.py section 8)
 
 
 @dataclass(frozen=True)
@@ -581,7 +582,7 @@ def _context(grid: Grid, config: SolverConfig, mass_flow_per_depth: float, c_ref
                     blade=slice(grid.first_blade_i, grid.last_blade_i + 1), inlet=inlet, mass_flow_source=source,
                     stop_at_sonic=bool(iteration.stop_at_sonic), kutta_eval=iteration.kutta_eval,
                     kutta_eval_offset_chords=iteration.kutta_eval_offset_chords,
-                    kutta_eval_interpolation=iteration.kutta_eval_interpolation)
+                    kutta_eval_interpolation=iteration.kutta_eval_interpolation, kutta_method=iteration.kutta_method)
 
 
 def _check_kutta_options(iteration) -> None:
@@ -596,6 +597,8 @@ def _check_kutta_options(iteration) -> None:
         if iteration.kutta_eval_interpolation not in kutta.KUTTA_INTERPOLATIONS:
             raise SolverInputError(f"kutta_eval_interpolation = {iteration.kutta_eval_interpolation!r}: one of "
                                    f"{kutta.KUTTA_INTERPOLATIONS}")
+    if iteration.kutta_method not in kutta.KUTTA_METHODS:
+        raise SolverInputError(f"kutta_method = {iteration.kutta_method!r}: one of {kutta.KUTTA_METHODS}")
 
 
 def _mass_flow(grid: Grid, config: SolverConfig, given, c_ref: float) -> tuple[InletState | None, float, str]:
@@ -674,16 +677,23 @@ def _kutta_step(current: _Pass, context: _Context) -> _Pass:
         except kutta.KuttaError:
             residual = None
         return replace(current, kutta=residual, exit_angle=angle, exit_angle_next=angle)
-    if context.kutta_eval == "station":
+    method = context.kutta_method
+    if context.kutta_eval == "station" and method != "aungier_13_57_58":
         residual = kutta.kutta_residual(current.flow, grid)
-    else:                                       # study option (kutta.py section 7): the speeds at m*
-        residual = kutta.residual_from_walls(
-            kutta.wall_values(current.flow, grid, evaluation=context.kutta_eval,
-                              offset_chords=context.kutta_eval_offset_chords,
-                              interpolation=context.kutta_eval_interpolation), grid)
-    correction = kutta.exit_angle_correction(residual, current.flow, context.metrics)
-    return replace(current, kutta=residual, correction=correction, exit_angle=angle,
-                   exit_angle_next=kutta.next_exit_angle(angle, correction, context.kutta_relaxation))
+    else:                                       # study options (kutta.py sections 7, 8): the speeds at m*, Eq. 13-58
+        walls = kutta.wall_values(current.flow, grid, evaluation=context.kutta_eval,
+                                  offset_chords=context.kutta_eval_offset_chords,
+                                  interpolation=context.kutta_eval_interpolation)
+        if method == "aungier_13_57_58":
+            walls = kutta.inside_outside_average(walls, context.metrics)
+        residual = kutta.residual_from_walls(walls, grid)
+    if method == "current":
+        correction = kutta.exit_angle_correction(residual, current.flow, context.metrics)
+        angle_next = kutta.next_exit_angle(angle, correction, context.kutta_relaxation)
+    else:                                       # study option (kutta.py section 8)
+        correction = kutta.aungier_exit_angle_correction(residual, current.flow, context.metrics)
+        angle_next = kutta.relaxed_exit_angle(angle, correction, context.kutta_relaxation)
+    return replace(current, kutta=residual, correction=correction, exit_angle=angle, exit_angle_next=angle_next)
 
 
 def _checked_pass(rho, context: _Context, grid: Grid, history: History, records: list, previous: _Pass | None,

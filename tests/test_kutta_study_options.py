@@ -13,9 +13,18 @@ What is checked
 - The solver refuses unknown option values before any pass, and a coupled solve with "fixed_m"
   drives the interpolated residual below the Kutta tolerance.
 
+- kutta_method: "current" is the default; "aungier_13_57" (the brief's formula, written
+  separately) equals exit_angle_correction to round-off and has its fixed point; alpha above 1
+  is taken by the Aungier path only; Eq. 13-58 by hand; "aungier_13_57_58" drives the averaged
+  speeds.
+
 Tolerances: polynomial reproduction 1e-11 relative (measured 4.4e-16 at most over 400 offsets
 along the blade); the coupled solve's final eps_K at m* below the case's kutta_tolerance by
-construction of the stop test.
+construction of the stop test; brief against production correction 1e-12 relative (measured
+1.0e-15); converged angles: 1e-6 deg between "current" and "aungier_13_57" at relaxation 1
+(measured 7.6e-13 deg, both 115 passes), 1e-5 deg against alpha 1.5 (measured 7.5e-7 deg, 77
+passes: the Kutta tolerance 1e-6 of this case stops the two at different distances from the
+root).
 """
 
 from __future__ import annotations
@@ -176,3 +185,71 @@ def test_a_fixed_m_coupled_solve_drives_the_interpolated_residual_down():
     assert solution.normalized_kutta_residual <= 1e-6
     station = kutta.kutta_residual(solution.flow, solution.grid)
     assert station.normalized > 1e-6        # the station's own Eq. 5-34 is not what was driven to zero
+
+
+# --- kutta_method (kutta.py section 8) ---------------------------------------------------------------------------
+
+def test_the_method_default_is_current():
+    it = cf.IterationSettings(density_tolerance=1e-8, max_density_iterations=1, kutta_tolerance=1e-8,
+                              max_kutta_iterations=1)
+    assert it.kutta_method == "current"
+    assert kutta.KUTTA_METHODS == ("current", "aungier_13_57", "aungier_13_57_58")
+
+
+def test_the_brief_formula_equals_the_production_correction_to_round_off():
+    solution = solved_flow()
+    residual = kutta.kutta_residual(solution.flow, solution.grid)
+    ours = kutta.exit_angle_correction(residual, solution.flow, solution.metrics)
+    brief = kutta.aungier_exit_angle_correction(residual, solution.flow, solution.metrics)
+    assert brief.delta_tan == pytest.approx(ours.delta_tan, rel=1e-12)
+    assert brief.delta_c_theta == pytest.approx(ours.delta_c_theta, rel=1e-12)
+    assert (brief.dm, brief.passage_width) == pytest.approx((ours.dm, ours.passage_width), rel=1e-12)
+
+
+def test_eq_13_58_by_hand():
+    solution = solved_flow()
+    g, metrics = solution.grid, solution.metrics
+    K, J = g.last_blade_i, len(g.eta) - 1
+    walls = kutta.wall_values(solution.flow, g)
+    averaged = kutta.inside_outside_average(walls, metrics)
+    cos0 = math.cos(math.atan(float(metrics.tan_beta0[K])))
+    cos1 = math.cos(math.atan(float(metrics.tan_beta1[K])))
+    W_m = np.asarray(solution.flow.W_m)
+    assert averaged.W0 == pytest.approx(0.5 * (walls.W0 + 2.0 * W_m[K, 0] / (cos0 + cos1)), rel=1e-14)
+    assert averaged.W1 == pytest.approx(0.5 * (walls.W1 + 2.0 * W_m[K, J] / (cos0 + cos1)), rel=1e-14)
+    assert (averaged.W_m0, averaged.W_m1) == (walls.W_m0, walls.W_m1)
+
+
+def test_the_relaxed_update_takes_alpha_above_one_and_refuses_nonsense():
+    correction = SimpleNamespace(delta_tan=0.02)
+    angle = 0.4
+    assert kutta.relaxed_exit_angle(angle, correction, 1.5) == pytest.approx(math.atan(math.tan(angle) + 0.03), rel=1e-15)
+    assert kutta.relaxed_exit_angle(angle, SimpleNamespace(delta_tan=0.0), 3.0) == angle
+    for bad in (0.0, -1.0, math.inf, math.nan, True):
+        with pytest.raises(kutta.KuttaError, match="alpha"):
+            kutta.relaxed_exit_angle(angle, correction, bad)
+    with pytest.raises(kutta.KuttaError, match="relaxation"):
+        kutta.next_exit_angle(angle, correction, 1.5)          # "current" keeps lambda_K <= 1
+
+
+def test_the_solver_refuses_an_unknown_method():
+    with pytest.raises(sv.SolverInputError, match="kutta_method"):
+        sv.solve(cascade(), config(kutta_method="newton"), c_ref=C_REF)
+
+
+def test_aungier_13_57_has_the_fixed_point_of_current():
+    current = sv.solve(cascade(), config(kutta_relaxation=1.0), c_ref=C_REF)
+    brief = sv.solve(cascade(), config(kutta_method="aungier_13_57", kutta_relaxation=1.0), c_ref=C_REF)
+    faster = sv.solve(cascade(), config(kutta_method="aungier_13_57", kutta_relaxation=1.5), c_ref=C_REF)
+    assert current.converged and brief.converged and faster.converged
+    assert math.degrees(abs(brief.exit_angle - current.exit_angle)) < 1e-6
+    assert math.degrees(abs(faster.exit_angle - current.exit_angle)) < 1e-5
+    assert len(faster.passes) < len(brief.passes)
+
+
+def test_aungier_13_58_drives_the_averaged_speeds_not_eq_5_34():
+    solution = sv.solve(cascade(), config(kutta_method="aungier_13_57_58"), c_ref=C_REF)
+    assert solution.converged
+    averaged = kutta.inside_outside_average(kutta.wall_values(solution.flow, solution.grid), solution.metrics)
+    assert kutta.residual_from_walls(averaged, solution.grid).normalized <= 1e-6
+    assert solution.normalized_kutta_residual <= 1e-6

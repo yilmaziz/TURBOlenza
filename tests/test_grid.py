@@ -56,31 +56,36 @@ from turbolenza.b2b.geometry import Cascade, CascadeSpec, make_cascade
 
 # A Dunavant-like cascade, a negative-stagger one with a sharp TE, and the first again with
 # a physical chord. Test inputs only: grid.py knows none of these numbers.
-SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10)
+SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,
+                   surface_continuity="C1")
 OTHER = CascadeSpec(blade_type="NACA65", solidity=1.5, stagger_deg=-20.0, cl0=0.4, t_max_over_c=0.06,
-                    profile_variant="emery_base")
+                    profile_variant="emery_base", surface_continuity="C1")
 DIMENSIONAL = replace(SPEC, physical_chord=0.05)
 CASES = (SPEC, OTHER, DIMENSIONAL)
 # A thin nose whose pressure side folds back in m 0.0024 to 0.0027 c behind the LE.
-THIN = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=50.0, cl0=1.6, t_max_over_c=0.04)
+THIN = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=50.0, cl0=1.6, t_max_over_c=0.04,
+                   surface_continuity="C1")
 # A nose that reaches 0.019 c ahead of the LE, more than a cell at 31 passage cells.
-STEEP = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=1.6, t_max_over_c=0.10)
+STEEP = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=1.6, t_max_over_c=0.10,
+                    surface_continuity="C1")
 # A Kovach TE whose pressure side passes m_te by 0.004 c before it closes on the TE point.
-LONG_TAIL = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=0.0, t_max_over_c=0.04)
+LONG_TAIL = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=0.0, t_max_over_c=0.04,
+                        surface_continuity="C1")
 EDGE_CASES = (SPEC, OTHER, DIMENSIONAL, THIN, STEEP, LONG_TAIL)
 # A Kovach TE whose suction side passes m_te, by 0.0040 c: negative stagger.
-SUCTION_TAIL = CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10)
+SUCTION_TAIL = CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10,
+                           surface_continuity="C1")
 # Thin sharp TEs at 0 and 60 deg stagger.
 SHARP_0 = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=0.0, cl0=0.4, t_max_over_c=0.04,
-                      profile_variant="emery_base")
+                      profile_variant="emery_base", surface_continuity="C1")
 SHARP_60 = replace(SHARP_0, stagger_deg=60.0)
 SHARP_60_FLAT = replace(SHARP_60, cl0=0.0)
 # Blades at the overlap limit of geometry.py: NEAR_CLOSED 2e-6 below the largest solidity it
 # accepts (5.931831), CLOSED at the largest (to 1e-9).
 NEAR_CLOSED = CascadeSpec(blade_type="NACA65", solidity=5.93182, stagger_deg=50.0, cl0=1.6, t_max_over_c=0.10,
-                          profile_variant="emery_base")
+                          profile_variant="emery_base", surface_continuity="C1")
 CLOSED = CascadeSpec(blade_type="NACA65", solidity=6.4246233818121254, stagger_deg=50.0, cl0=0.4, t_max_over_c=0.10,
-                     profile_variant="emery_base")
+                     profile_variant="emery_base", surface_continuity="C1")
 # The same blade as SPEC with 16 times the camber stations, as a reference surface.
 FINE = replace(SPEC, n_camber_stations=1601)
 INLET_ANGLES_DEG = (45.0, 20.0, -10.0, 60.0)
@@ -903,7 +908,7 @@ def test_a_station_on_a_sharp_te_touches_the_blade_and_is_periodic(physical_chor
     it is the first exit station, not a blade station whose two wall nodes would collapse
     onto the TE point, and the chord-1 and physical cascades agree on it."""
     spec = CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=60.0, cl0=0.4, t_max_over_c=0.04,
-                       profile_variant="emery_base", physical_chord=physical_chord)
+                       profile_variant="emery_base", physical_chord=physical_chord, surface_continuity="C1")
     a = cascade_of(spec).active
     g = grid_of(spec, 30.0, replace(SETTINGS, n_passage=17, n_eta=11))
     assert abs(g.m[51] - g.m_te) < 1e-15 * a.chord
@@ -1484,17 +1489,24 @@ def test_the_passage_width_is_positive_at_every_station(spec, n_passage):
 # --- Geometry sweep -------------------------------------------------------------------------
 
 SWEEP = (
-    CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10),
-    CascadeSpec(blade_type="NACA65", solidity=1.2, stagger_deg=50.0, cl0=0.8, t_max_over_c=0.06),
+    CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,
+                surface_continuity="C1"),
+    CascadeSpec(blade_type="NACA65", solidity=1.2, stagger_deg=50.0, cl0=0.8, t_max_over_c=0.06,
+                surface_continuity="C1"),
     CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=15.0, cl0=1.6, t_max_over_c=0.04,
-                profile_variant="emery_base"),
+                profile_variant="emery_base", surface_continuity="C1"),
     CascadeSpec(blade_type="NACA65", solidity=1.5, stagger_deg=-20.0, cl0=0.4, t_max_over_c=0.06,
-                profile_variant="emery_base"),
-    CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10),
-    CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=0.0, cl0=0.4, t_max_over_c=0.04),
-    CascadeSpec(blade_type="NACA65", solidity=2.0, stagger_deg=45.0, cl0=1.0, t_max_over_c=0.08),
-    CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10, physical_chord=0.05),
-    CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10, physical_chord=0.2),
+                profile_variant="emery_base", surface_continuity="C1"),
+    CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10,
+                surface_continuity="C1"),
+    CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=0.0, cl0=0.4, t_max_over_c=0.04,
+                surface_continuity="C1"),
+    CascadeSpec(blade_type="NACA65", solidity=2.0, stagger_deg=45.0, cl0=1.0, t_max_over_c=0.08,
+                surface_continuity="C1"),
+    CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10, physical_chord=0.05,
+                surface_continuity="C1"),
+    CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10, physical_chord=0.2,
+                surface_continuity="C1"),
 )
 
 

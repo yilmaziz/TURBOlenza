@@ -12,8 +12,10 @@ Use
     spec = CascadeSpec(blade_type="NACA65", solidity=..., stagger_deg=..., cl0=..., t_max_over_c=...)
     cascade = make_cascade(spec)
 CascadeSpec holds the inputs and the only modelling defaults; Cascade is the generated,
-checked geometry, and keeps its spec. surface_continuity="C2" gives the blade as quintic
-curves with a robust leading edge (see "Surface continuity" and "The C2 leading edge").
+checked geometry, and keeps its spec. By default (surface_continuity "C2", FROZEN 2026-11-14)
+the blade is two quintic curves with a robust leading edge and the natural quintic thickness;
+surface_continuity="C1" gives the validated legacy construction (see "Surface continuity" and
+"The C2 leading edge").
 
 Families
     "NACA65" is implemented, with the A10 (a = 1.0) mean line and two profile variants.
@@ -30,7 +32,7 @@ NACA 65 construction [Aungier 2003 Secs. 4.1, 4.2, Table 4-1; standard NACA prac
     - Thickness: the corrected column, continued between its stations in z = sqrt(station)
       (a nose that grows like sqrt(x) is nearly straight in z) by one of two reconstructions,
       both exact at every station (CascadeSpec.thickness_reconstruction):
-        "quintic_natural_sqrt" (the C2 default since 2026-11-13): the interpolating quintic
+        "quintic_natural_sqrt" (the C2 default since 2026-11-13, frozen 2026-11-14): the interpolating quintic
           spline with h''' = h'''' = 0 at both ends, the interpolant of least int h'''^2; C4,
           so the surfaces have no curvature feature at the stations. Its maximum lies
           between the stations, 0.099961 at station 0.4098 (the quadratic through the three
@@ -100,8 +102,8 @@ Lengths
     lengths grid.py uses: the same as normalized when physical_chord is None.
 
 Surface continuity (CascadeSpec.surface_continuity, the one switch)
-    "C1", the default, is the construction above as it is, with the legacy PCHIP thickness:
-    the validated baseline, unchanged bit for bit. Its surfaces are the polylines, and the
+    "C1" (the default until 2026-11-14; now asked for by name) is the construction above as it
+    is, with the legacy PCHIP thickness: the validated baseline, unchanged bit for bit. Its surfaces are the polylines, and the
     curve they sample is C1 only: the PCHIP thickness jumps the curvature at every table
     station (up to 3 /c near the nose, 1.2 /c mid-chord), the LE fair meets the surface with a 0.006-0.008 deg kink, the Kovach
     TE fair keeps the tangent (to 1e-7 rad) but jumps the curvature by about 1/R_TE, and the
@@ -111,7 +113,10 @@ Surface continuity (CascadeSpec.surface_continuity, the one switch)
     naca65_reference_surfaces gives each C1 surface as its chain of analytic pieces with
     exact derivatives; every C1 vertex lies on it to C2_ANCHOR_TOL.
 
-    "C2" is the robust design geometry: per surface one clamped quintic B-spline
+    "C2", the default and FROZEN since 2026-11-14 (the robust LE below and the
+    "quintic_natural_sqrt" thickness; locked by tests/test_geometry.py
+    test_c2_frozen_fingerprint, so a change needs the user's approval and a new lock), is the
+    robust design geometry: per surface one clamped quintic B-spline
     X(u) = (m(u), y(u)) (C4 at its simple knots) representing, by least squares, a target
     made of two parts that meet G2 at an anchor (fit_c2_surface):
     - Downstream of the anchor, the C1 table surface (built with the same thickness
@@ -259,7 +264,8 @@ THICKNESS_RTOL = 2e-3           # inscribed thickness against t_max_over_c
 
 SURFACE_CONTINUITIES = ("C1", "C2")
 # CascadeSpec.thickness_reconstruction None takes the representation's own: the validated C1 construction keeps
-# its legacy PCHIP (bit for bit), the C2 design geometry the curvature-smooth quintic (2026-11-13)
+# its legacy PCHIP (bit for bit), the C2 design geometry the curvature-smooth quintic (2026-11-13; frozen with
+# the C2 geometry and made the CascadeSpec default 2026-11-14)
 DEFAULT_THICKNESS_RECONSTRUCTION = MappingProxyType({"C1": LEGACY_THICKNESS_RECONSTRUCTION, "C2": "quintic_natural_sqrt"})
 SLOPE_MIN_COS = math.sqrt(np.finfo(float).eps)  # |cos(beta)| below this: y(m) is singular (metrics.py's threshold)
 
@@ -549,12 +555,12 @@ class CascadeSpec:
     sets the resolution of the camberline and of the surfaces built along it.
 
     surface_continuity chooses the representation of the surfaces, the one switch for it:
-    "C1" is the validated construction itself, polylines on a surface that is C1 (C0 at the
-    Kovach station 0.60), the legacy baseline; "C2" is the robust design geometry, two
+    "C2" (the default since 2026-11-14, FROZEN then) is the robust design geometry, two
     quintic B-spline curves, at least C2 inside each surface, equal to C1 within 1e-6 c
     downstream of the LE and with a redesigned, monotone-curvature leading edge, sampled into
-    the same arrays (see "Surface continuity" and "The C2 leading edge" in the module
-    docstring). Exactly "C1" or "C2".
+    the same arrays; "C1" is the validated construction itself, polylines on a surface that is
+    C1 (C0 at the Kovach station 0.60), the legacy baseline, kept bit for bit (see "Surface
+    continuity" and "The C2 leading edge" in the module docstring). Exactly "C1" or "C2".
 
     thickness_reconstruction chooses how the tabulated thickness is continued between its
     stations (both are exact at every station; module docstring, "Thickness"):
@@ -562,7 +568,8 @@ class CascadeSpec:
     "pchip_sqrt", the legacy PCHIP, whose curvature jumps at every station. None (the
     default) takes the representation's own, DEFAULT_THICKNESS_RECONSTRUCTION: "pchip_sqrt"
     for "C1" (the validated legacy construction, unchanged bit for bit) and
-    "quintic_natural_sqrt" for "C2" (since 2026-11-13; the solver's geometry).
+    "quintic_natural_sqrt" for "C2" (since 2026-11-13; the solver's geometry). So the default
+    spec gives the frozen C2 geometry with the natural quintic thickness.
     """
 
     blade_type: str
@@ -574,7 +581,7 @@ class CascadeSpec:
     profile_variant: str = "kovach_sandercock"
     physical_chord: float | None = None
     n_camber_stations: int = 101
-    surface_continuity: str = "C1"
+    surface_continuity: str = "C2"
     thickness_reconstruction: str | None = None
 
 

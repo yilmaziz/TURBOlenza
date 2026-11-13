@@ -26,7 +26,7 @@ surface_mach_medium.csv (this solver's wall values) and comparison.txt (the peak
 DATA = "validation/naca65_12a10_10/Dunavant_Aungier_Fix.csv"    # the corrected M 0.65 data (2026-11-13)
 OUTPUT_DIR = "outputs/dunavant_aungier_comparison"
 GRID_LEVEL = "very_fine"  # "coarse", "medium", "fine", "very_fine" (the grid.py section 9)
-PROFILE_VARIANT = "emery_base"          # as scripts/run_full_solver.py; "kovach_sandercock" the project default
+PROFILE_VARIANT = "kovach_sandercock"          # as scripts/run_full_solver.py; "kovach_sandercock" the project default
 INLET_MACH = 0.65                       # the data's condition
 LE_ZOOM = (0.0, 0.25)                   # x/c range of the leading-edge close-up
 

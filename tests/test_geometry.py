@@ -6,11 +6,15 @@ module does not compute itself: a rotation matrix, Aungier's Eqs. 4-6, 4-30 and 
 out here, Table 4-1 as printed, a brute-force polyline distance, a finer build of the same
 blade, or a second build with one parameter changed.
 
-One case is frozen on purpose: test_c1_baseline_fingerprint locks the validated C1 geometry
-(surface_continuity "C1", the default) to numbers taken from the module before the C2
-representation was added. Bit-for-bit equality with that module was checked once on 200
-cascades and every field; the lock allows 1e-13 so that a platform's last-bit differences
-in libm do not fail it.
+Two geometries are frozen on purpose. test_c1_baseline_fingerprint locks the validated C1
+geometry (surface_continuity "C1", the legacy baseline, the default until 2026-11-14) to
+numbers taken from the module before the C2 representation was added. Bit-for-bit equality
+with that module was checked once on 200 cascades and every field; the lock allows 1e-13 so
+that a platform's last-bit differences in libm do not fail it. test_c2_frozen_fingerprint
+locks the C2 design geometry (the robust LE and the natural quintic thickness, the default
+since 2026-11-14) to numbers taken when it was frozen; its 1e-9 covers the measured 4.2e-11
+response of the C2 fit to a one-ulp input change. DEFAULT_SPEC below states "C1", so the
+tests of the C1 construction keep testing C1.
 
 The thickness reconstruction (CascadeSpec.thickness_reconstruction) defaults to the legacy
 PCHIP for C1 and to the natural quintic for C2 (2026-11-13); C2 is compared with C1 built with
@@ -45,7 +49,10 @@ from scipy.optimize import minimize_scalar
 
 from turbolenza.b2b import geometry as g
 
-DEFAULT_SPEC = g.CascadeSpec(blade_type="NACA65", solidity=1.25, stagger_deg=25.0, cl0=0.8, t_max_over_c=0.08)
+# C1 stated explicitly: these tests check the validated C1 construction, which was the default until
+# 2026-11-14; the C2 tests ask for "C2" through spec_with / build.
+DEFAULT_SPEC = g.CascadeSpec(blade_type="NACA65", solidity=1.25, stagger_deg=25.0, cl0=0.8, t_max_over_c=0.08,
+                             surface_continuity="C1")
 NOMINAL_PEAK = 0.9992       # Table 4-1: the "10 %" 65-010 column peaks at 9.992 % (x/c 0.40)
 LEGACY = g.DEFAULT_THICKNESS_RECONSTRUCTION["C1"]           # "pchip_sqrt"
 C2_THICKNESS = g.DEFAULT_THICKNESS_RECONSTRUCTION["C2"]     # "quintic_natural_sqrt"
@@ -120,7 +127,7 @@ def test_cascade_spec_holds_the_only_modelling_defaults():
     spec = g.CascadeSpec(blade_type="NACA65", solidity=1.4, stagger_deg=20.0, cl0=0.9, t_max_over_c=0.07)
     assert (spec.meanline_type, spec.profile_variant, spec.physical_chord, spec.n_camber_stations,
             spec.surface_continuity, spec.thickness_reconstruction) == \
-        ("A10", "kovach_sandercock", None, 101, "C1", None)
+        ("A10", "kovach_sandercock", None, 101, "C2", None)
     assert dict(g.DEFAULT_THICKNESS_RECONSTRUCTION) == {"C1": "pchip_sqrt", "C2": "quintic_natural_sqrt"}
     # Nothing behind make_cascade has a default of its own.
     assert list(inspect.signature(g.make_cascade).parameters) == ["spec"]
@@ -631,26 +638,129 @@ def test_c1_baseline_fingerprint(variant):
         np.testing.assert_allclose(value, expected[key], rtol=1e-13, atol=1e-16, err_msg=key)
 
 
-def test_surface_continuity_defaults_to_c1_which_carries_no_curves():
+def test_surface_continuity_defaults_to_c2_which_carries_the_curves():
+    """The default since 2026-11-14 is the frozen C2 geometry; C1 is asked for by name and carries no curves."""
     spec = g.CascadeSpec(blade_type="NACA65", solidity=1.4, stagger_deg=20.0, cl0=0.9, t_max_over_c=0.07)
-    assert spec.surface_continuity == "C1" and g.SURFACE_CONTINUITIES == ("C1", "C2")
+    assert spec.surface_continuity == "C2" and g.SURFACE_CONTINUITIES == ("C1", "C2")
     c = g.make_cascade(spec)
-    assert c.normalized_curves is None and c.active_curves is None
-    assert not any(key.startswith("c2") or key == "surface_representation" for key in c.metadata)
+    assert c.normalized_curves is not None and c.active_curves is not None
+    assert c.metadata["thickness_reconstruction"] == "quintic_natural_sqrt"
+    assert c.metadata["le_model"] == "monotone_curvature_fair"
+    legacy = g.make_cascade(replace(spec, surface_continuity="C1"))
+    assert legacy.normalized_curves is None and legacy.active_curves is None
+    assert legacy.metadata["thickness_reconstruction"] == "pchip_sqrt"
+    assert not any(key.startswith("c2") or key == "surface_representation" for key in legacy.metadata)
 
 
 @pytest.mark.parametrize("variant", g.PROFILE_VARIANTS)
-def test_explicit_c1_is_the_default_bit_for_bit(variant):
-    default = build(profile_variant=variant, physical_chord=0.07)
-    explicit = build(profile_variant=variant, physical_chord=0.07, surface_continuity="C1")
+def test_explicit_c2_with_the_quintic_is_the_default_bit_for_bit(variant):
+    spec = g.CascadeSpec(blade_type="NACA65", solidity=1.25, stagger_deg=25.0, cl0=0.8, t_max_over_c=0.08,
+                         profile_variant=variant, physical_chord=0.07)
+    default = g.make_cascade(spec)
+    explicit = g.make_cascade(replace(spec, surface_continuity="C2", thickness_reconstruction="quintic_natural_sqrt"))
     for label in ("normalized", "active"):
         for item in fields(g.CascadeCoordinates):
             np.testing.assert_array_equal(getattr(getattr(explicit, label), item.name),
                                           getattr(getattr(default, label), item.name))
+    for label in ("normalized_curves", "active_curves"):
+        for name in ("suction", "pressure", "suction_unstaggered", "pressure_unstaggered"):
+            ours, theirs = getattr(getattr(explicit, label), name), getattr(getattr(default, label), name)
+            np.testing.assert_array_equal(ours.control_points, theirs.control_points)
+            np.testing.assert_array_equal(ours.knots, theirs.knots)
     for name in ("stagger", "camber_angle", "chi_le", "chi_te", "kappa_le", "kappa_te", "throat_over_pitch",
                  "throat_over_chord", "throat_over_pitch_correlation"):
         assert getattr(explicit, name) == getattr(default, name)
     assert dict(explicit.metadata) == dict(default.metadata)
+
+
+# --- surface continuity: C2 is the frozen design geometry (2026-11-14) ------------------------
+
+C2_FINGERPRINT_SPECS = {     # the two variants of DEFAULT_SPEC, and the solver's validation blade
+    "kovach_sandercock": replace(DEFAULT_SPEC, surface_continuity="C2", profile_variant="kovach_sandercock"),
+    "emery_base": replace(DEFAULT_SPEC, surface_continuity="C2", profile_variant="emery_base"),
+    "65-(12A10)10": g.CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10),
+}
+C2_FINGERPRINT_U = (0.002, 0.05, 0.5)      # in the LE fair, behind the LE anchor, mid-chord
+C2_FINGERPRINT = {      # taken from geometry.py on 2026-11-14, when the C2 geometry was frozen
+    "kovach_sandercock": {
+        "points": (208, 213),
+        "control_points": (414, 447),
+        "sums": (95.51925319753433, 5.454755393791725, 95.60263315329917, -0.1027031018718374),
+        "control_sums": (113.16532177520041, 9.352622165762892, 110.94361364925783, -0.5100421030705986),
+        "suction_at_u": ((-0.00018572399088258244, 0.0020346856699687546), (0.04052271018280367, 0.027666934938312696),
+                         (0.49884715805263175, 0.08266231025910009)),
+        "pressure_at_u": ((0.001047329920794516, -0.0016951019011210205), (0.04868700009715207, -0.0047758580050219),
+                          (0.500801856945998, 0.005659301068102172)),
+        "suction_curvature_at_u": (-196.43609524495673, -3.051058914827888, -0.6811995844468087),
+        "pressure_curvature_at_u": (214.76556607730706, 0.46205280398001847, 0.1869199452931848),
+        "le_anchor_u": (0.010365462277339265, 0.011216539080322127),
+        "le_departure_u": (0.00154993052963812, 0.0016062413984590787),
+        "le_fairness": (0.9625517174339578, 0.7353443543369287),
+        "throat": 0.6375033027822187, "throat_over_pitch": 0.7968791284777733, "area": 0.055893418325073885},
+    "emery_base": {
+        "points": (164, 169),
+        "control_points": (378, 413),
+        "sums": (51.535762628711005, 4.945884497557422, 51.84652483447332, 0.29512755896580634),
+        "control_sums": (84.28482896219545, 7.455014927523157, 84.66256542296111, -0.3005382692672832),
+        "suction_at_u": ((-0.00018738344025728953, 0.002022555533755243), (0.04023679250255069, 0.02755768622600673),
+                         (0.4957879988450233, 0.0827619074968153)),
+        "pressure_at_u": ((0.001044840693386648, -0.0016925822224674464), (0.04859846425187905, -0.004777290298147942),
+                          (0.4999169287826601, 0.0056282079384378)),
+        "suction_curvature_at_u": (-197.31952753401478, -3.0630096889375786, -0.6826849441164754),
+        "pressure_curvature_at_u": (214.87922593796807, 0.46372869750257956, 0.1878086667111122),
+        "le_anchor_u": (0.010427381314652312, 0.011236339600498992),
+        "le_departure_u": (0.0015591891814695103, 0.0016090768912070067),
+        "le_fairness": (0.9625517174339578, 0.7353443543369287),
+        "throat": 0.6375033025663435, "throat_over_pitch": 0.7968791282079293, "area": 0.05239448501711963},
+    "65-(12A10)10": {
+        "points": (208, 230),
+        "control_points": (394, 437),
+        "sums": (95.45551883197653, 7.3470114429032245, 95.80280606574028, 0.5907469290284107),
+        "control_sums": (107.94615711956595, 11.8442327377534, 105.61110556403362, 0.33357990944533433),
+        "suction_at_u": ((-0.0006491609356879365, 0.001993208516498273), (0.03432961544801684, 0.03542338496042315),
+                         (0.4967283057330068, 0.11444423371043105)),
+        "pressure_at_u": ((0.0011561246235971539, -0.001638461551000991), (0.048685757613781314, -0.0030638931673078605),
+                          (0.5009695913098412, 0.018113295166576886)),
+        "suction_curvature_at_u": (-145.5603619034723, -3.9666899224897194, -0.8951885434022345),
+        "pressure_curvature_at_u": (145.56041098681587, 0.3006479822358992, 0.1659133215657833),
+        "le_anchor_u": (0.013412143833950351, 0.017537823972696848),
+        "le_departure_u": (0.0023686008612041403, 0.0025048554669506113),
+        "le_fairness": (1.0441614367474414, 0.7093012656924348),
+        "throat": 0.7215213941264458, "throat_over_pitch": 0.7215213941264458, "area": 0.06960680691787813},
+}
+# Measured 2026-11-14: the build is reproducible run to run on one machine. A one-ulp change of
+# t_max_over_c, cl0, stagger_deg or solidity moves these numbers by at most 4.2e-11 relative
+# (the curvatures; positions and sums 4e-12), so another platform's last-bit differences
+# should stay below that. 1e-9 covers the measured 4.2e-11; any change to the construction
+# moves them by far more.
+C2_FINGERPRINT_RTOL = 1e-9
+
+
+@pytest.mark.parametrize("case", C2_FINGERPRINT)
+def test_c2_frozen_fingerprint(case):
+    """The frozen C2 geometry (robust LE, natural quintic thickness), the default CascadeSpec's."""
+    c = _cached(C2_FINGERPRINT_SPECS[case])
+    n, curves, md, expected = c.normalized, c.normalized_curves, c.metadata, C2_FINGERPRINT[case]
+    assert md["thickness_reconstruction"] == "quintic_natural_sqrt" and md["le_model"] == "monotone_curvature_fair"
+    ss, ps = n.suction_surface_unstaggered, n.pressure_surface_unstaggered
+    suction, pressure = curves.suction_unstaggered, curves.pressure_unstaggered
+    assert (len(ss), len(ps)) == expected["points"]
+    assert tuple(md["c2_control_points"]) == expected["control_points"]
+    assert (len(suction.control_points), len(pressure.control_points)) == expected["control_points"]
+    u = np.array(C2_FINGERPRINT_U)
+    measured = {
+        "sums": (ss[:, 0].sum(), ss[:, 1].sum(), ps[:, 0].sum(), ps[:, 1].sum()),
+        "control_sums": (*suction.control_points.sum(axis=0), *pressure.control_points.sum(axis=0)),
+        "suction_at_u": suction.evaluate(u), "pressure_at_u": pressure.evaluate(u),
+        "suction_curvature_at_u": suction.curvature(u), "pressure_curvature_at_u": pressure.curvature(u),
+        "le_anchor_u": (md["ss_le_anchor_u"], md["ps_le_anchor_u"]),
+        "le_departure_u": (md["ss_le_departure_u"], md["ps_le_departure_u"]),
+        "le_fairness": (md["ss_le_fairness"], md["ps_le_fairness"]),
+        "throat": n.throat_opening, "throat_over_pitch": c.throat_over_pitch,
+        "area": shoelace(np.vstack((ss[::-1], ps[1:]))),
+    }
+    for key, value in measured.items():
+        np.testing.assert_allclose(value, expected[key], rtol=C2_FINGERPRINT_RTOL, atol=1e-15, err_msg=key)
 
 
 @pytest.mark.parametrize("variant", g.PROFILE_VARIANTS)

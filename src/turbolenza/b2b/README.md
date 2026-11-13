@@ -12,7 +12,7 @@ angle for the Kutta condition in the same loop.
 >
 > | Module | State |
 > |---|---|
-> | `geometry.py` | reopened 2026-11-11 for the surface representation (`CascadeSpec.surface_continuity`). **C1 geometry — VALIDATED LEGACY BASELINE** (the default; unchanged, bit for bit). **Thickness reconstruction (2026-11-13, approved):** `CascadeSpec.thickness_reconstruction`, C2 default the natural quintic spline in √station (C4, exact at the table stations), C1 default the legacy PCHIP (`"pchip_sqrt"`, selectable for C2 too, the previous C2 bit for bit). **C2 geometry — ROBUST LE IMPLEMENTED / UNDER VALIDATION** (quintic curves; within 1e-6 c of C1 downstream of the LE, a redesigned monotone-curvature leading edge ahead of it; not frozen, awaiting review of the LE plots) |
+> | `geometry.py` | **C2 geometry — FROZEN 2026-11-14, the `CascadeSpec` default** (`surface_continuity="C2"`): quintic curves, within 1e-6 c of C1 downstream of the LE, the robust monotone-curvature leading edge ahead of it, and the natural quintic thickness in √station (`"quintic_natural_sqrt"`, C4, exact at the table stations; the C2 default since 2026-11-13). Locked by `test_c2_frozen_fingerprint`; a change needs the user's approval and a new lock. **C1 geometry — VALIDATED LEGACY BASELINE** (asked for by name since 2026-11-14, `surface_continuity="C1"`; unchanged, bit for bit, with its legacy PCHIP thickness `"pchip_sqrt"`, which C2 can still select: the previous C2 bit for bit) |
 > | `grid.py` | C1 path: FROZEN geometric grid implementation, unchanged bit for bit (passage boundaries, both extensions, a continuous check that the smooth passage is open, uniform (m, η) nodes, blade-passage topology from the station lines, tracked wall identity, exit rebuild). **C2 path reopened 2026-11-11 — UNDER REVIEW, not frozen:** the walls are the authoritative curves (section 7 of its docstring). **Admissible n_passage added 2026-11-12 — UNDER REVIEW:** the first and last blade station must each cut one suction and one pressure surface (section 8): `make_grid(..., require_ss_ps=True)` and `validate_uniform_grid_topology` raise `GridTopologyError` (never repair), `find_valid_n_passage` and `n_passage_ceiling` are read-only queries; the default build is unchanged. **Geometry-driven standard grids added 2026-11-13 — UNDER REVIEW (section 9):** five named levels (`GRID_LEVELS`, very_coarse … very_fine), `build_grid(cascade, level)`, `build_grid_family(cascade)` → `GridPackage`, `GridSettings(level=...)` through `make_grid` and so the solver; the lattice is anchored to the blade's own SS + PS transitions, so admissibility belongs to the geometry, not to a lucky n_passage; structured `GridGenerationError`; the explicit n_passage path unchanged bit for bit |
 > | `metrics.py` | implemented: S, dS/dm, the grid-line angles of Eqs. 5-3, 5-9 and d tan β/dm. C1: finite differences, unchanged bit for bit. **C2 blade walls (2026-11-11) — UNDER REVIEW, not frozen:** exact spline slopes |
 > | `coefficients.py` | **implemented 2026-11-12 — UNDER REVIEW, not frozen:** A to E of Eq. 5-21 (Eqs. 5-22 to 5-26) from the metrics, a frozen ρ field and the mass flow per unit depth; planar, non-rotating (no right-hand side); the one physical length scale `c_ref` |
@@ -33,9 +33,11 @@ angle for the Kutta condition in the same loop.
 >
 > **The solver goes with C2 only for now.** After the 2026-11-11 hand-off, `grid.py` takes
 > the blade-wall locations and `metrics.py` the blade-wall angles from the C2 geometry (the
-> authoritative quintic curves). A fair scientific comparison of C1 against C2 is planned
-> for later (with an exact piecewise-C1 derivative path first, so that only the surface
-> continuity differs); until then the C1 path stays as it is, the legacy baseline.
+> authoritative quintic curves). Since 2026-11-14 C2 is frozen and the `CascadeSpec`
+> default, so a spec that does not name `surface_continuity` gets the solver's geometry. A
+> fair scientific comparison of C1 against C2 is planned for later (with an exact
+> piecewise-C1 derivative path first, so that only the surface continuity differs); until
+> then the C1 path stays as it is, the legacy baseline.
 > `notebooks/Grid_Metrics.ipynb` walks through the workflow.
 >
 > The straight m-links across the LE and TE transition intervals are not used by
@@ -294,7 +296,7 @@ Left open on purpose. Each is settled when its module is implemented.
 | The sonic node at the first blade station (M₁ ≥ 0.6175 on 61 × 41; the Fig. 5-6 condition M₁ = 0.65 stopped or diverged): **FIXED 2026-11-13** in `flow.py` (ψ_m by `metrics.py`'s m regions, one-sided at f − 1, f, l, l + 1; nothing else changed). With the sonic stop on, M₁ 0.60 to 0.68 converge subsonically on 61 × 41 with the field peak on the suction wall (0.906 at M₁ 0.65), and 0.65 on 43 × 29 and 87 × 59 too; the first stop is at M₁ 0.70, pass 11, on the suction wall (node (f + 9, 0)), a genuine wall-sonic case. The production runs reproduce the diagnostic what-if V bit for bit (`scripts/verify_le_velocity_fix.py`). The diagnosis, for the record. Cause: `flow.py`'s velocity recovery takes ψ_m at the interior nodes of the first blade station by a central difference across the leading edge (stations f − 1, f + 1) while `metrics.py`'s tan β there is the blade-side slope; the two belong to different η-lines (slopes 2.50 against 1.86 at the critical node), W_θ comes out about 50 m/s too large and the Mach number 0.10 to 0.17 too high over η ≈ 0.03 to 0.4 of that one station (recomputed on the production field; 0.22 against the converged variant at the critical node); the density feedback amplifies it. A diagnostic variant with same-side ψ_m at f − 1, f, l, l + 1 (nothing else changed) converges M₁ = 0.65 subsonically on three grids (peak 0.906 to 0.912 on the suction wall). Decision log, 2026-11-13 (the diagnosis and the fix); `scripts/diagnose_mach060_vs_065.py`, `scripts/verify_le_velocity_fix.py` | `flow.py` |
 | D and E at the transition stations: production B_m, C_m cross the leading edge there and D has the wrong sign against same-side differences at f − 1 and f (−3556 against +10204 at the critical node; f + 1 agrees). Not the cause of the sonic node (the velocity variant alone removes it), but the naive same-side replacement is no fix either: it diverges on pass 0 or 1 at a wall node of the first or last blade station. **PARKED 2026-11-13:** the ψ_m fix of `flow.py` leaves D and E exactly as they were (bit for bit); needs its own study | `coefficients.py`, `discretization.py` |
 | The discharge angle on grids. **2026-11-13, the systematic five-level family (grid.py section 9, M₁ 0.65, stop on):** β_out 25.478°, 24.372°, 23.570°, 22.683°, 23.282° from very_coarse to very_fine (dm/c 0.0400 … 0.0100): four steady drops of 0.80 to 1.11° per level, then a rise of 0.60°; NOT CONVERGED, so grid selection alone is not the explanation. The Kutta station l lies (dm − w_TE)/2 ahead of the TE on every level, so it samples x/c 0.987 → 0.9996 as the grid is refined and enters the TE-circle closure at the finest levels (the suction-wall tan β at l flips from +0.12 to −0.40, cos β of both walls falls to 0.93, the TE speed jumps back up 133.3 → 139.0 m/s); against (m_TE − m_l)/c the old grids lie within 0.33° of the family's curve (87 × 59 and very_fine have nearly the same dm, 0.0097 and 0.0100 c, but Kutta stations 0.0042 and 0.0050 c from the TE, and differ by 0.38°, as that curve's rising branch has it): the old scatter is largely this effect. Next suspects, not changed here: the Kutta station placement (Eq. 5-34 at the last blade station) and the transition D/E (growing as about dm^−1.5). Earlier record: the discharge angle changes by about 1° between admissible grids without a trend (M₁ 0.60: 23.75°, 22.79°, 23.92° on 43 × 29, 61 × 41, 87 × 59 before the 2026-11-13 ψ_m fix; after it 23.78°, 22.76°, 23.74° (the what-if V runs, which production reproduces bit for bit), and at M₁ 0.65 (production) 23.72°, 22.70°, 23.66°: 61 × 41 still the outlier), and by 0.39° with the thickness variant (kovach_sandercock against emery_base). **STILL OPEN** after the fix. To be understood before any comparison with 24.4° / 25.0° | `kutta.py`, `grid.py` |
-| Digitizing the Dunavant data: Fig. 10(b) of RM L55I08 (S against percent chord, β₁ 45°, σ 1.0, α 12.0°, M₁ 0.650, θ 19.9°), or Aungier's Fig. 5-6 (the same data converted to Mach numbers). Nothing is digitized; `read_surface_points` and the script's `--experiment` take a CSV (surface, x_c, mach or S). Not done by OCR or by eye in this project | `scripts/validate_naca65_12a10_10.py` |
+| Digitizing the Dunavant data: **settled 2026-11-13.** The user digitized Aungier's Fig. 5-6 (Dunavant's measured surface Mach numbers at M₁ 0.65 and Aungier's potential-flow curve, suction and pressure side) with WebPlotDigitizer: `validation/naca65_12a10_10/Dunavant_Aungier_Fix.csv`, the trusted validation data; `scripts/compare_dunavant_aungier.py` plots against it. Open: `scripts/validate_naca65_12a10_10.py` still reads measured points only through `--experiment` (a CSV of surface, x_c, mach or S) and does not use this file | `scripts/validate_naca65_12a10_10.py` |
 
 ## Decision log
 
@@ -1590,6 +1592,31 @@ Choices that are ours, not the book's, or where the spec and the data disagreed.
     geometry). `test_naca_thickness_reconstruction.py` builds A_pchip and C_quintic_natural
     through `CascadeSpec` and registers the diagnostic candidates under their own names. The
     C1 fingerprint and every C1 lock are untouched. Suite 1772 pass, none skipped.
+- **C2 geometry frozen and made the default (2026-11-14, user's decision).** The C2 geometry
+  with the robust LE (monotone-curvature Whewell fair, anchor 0.5 R_LE past the existence
+  boundary) and the `"quintic_natural_sqrt"` thickness is FROZEN as it stands, and
+  `CascadeSpec.surface_continuity` defaults to `"C2"` (`thickness_reconstruction` None takes
+  the quintic for C2, as before). The open LE tuning item, a short second curvature drop just
+  ahead of the suction-side anchor (about −58 → −30 /c at the default blade), is accepted as
+  is. Nothing of the construction changed: an explicit `"C2"` spec gives the same cascade bit
+  for bit, and `"C1"` stays the validated legacy baseline (its fingerprint and every C1 lock
+  untouched).
+  - The lock: `test_c2_frozen_fingerprint` on three blades (DEFAULT_SPEC of `test_geometry.py`
+    in both variants and the 65-(12A10)10 at 33°, built with the default spec): point and
+    control-point counts, sums of the surface arrays and control points, X(u) and curvature at
+    u = 0.002, 0.05, 0.5, the LE anchor and departure parameters and fairness, throat, area.
+    Measured first: the build is reproducible run to run; a one-ulp change of t_max_over_c,
+    cl0, stagger_deg or solidity moves these by at most 4.2e-11 relative (the curvatures;
+    positions and sums 4e-12), so the lock allows 1e-9 (C1's 1e-13 would be tighter than the
+    C2 fit's own last-bit response).
+  - What had to say "C1": the tests and the one script that meant the C1 construction and
+    relied on the old default now name it (`test_geometry.py` DEFAULT_SPEC, `test_grid.py`,
+    `test_metrics.py`, `test_config.py`, `scripts/plot_metrics_accuracy.py`), so they test and
+    plot exactly what they did before. The two tests of the default were rewritten for C2
+    (the default carries the curves; an explicit C2 + quintic spec equals the default bit for
+    bit, curves included). The solver path (`controller.CaseSettings`, the scripts, the
+    notebooks) already named its surface continuity and is unchanged. Suite 1623 pass; the
+    only other results are the tests of scripts removed from the working copy the same day.
 
 ## Looking at the geometry
 

@@ -40,7 +40,7 @@ def test_one_extension_chord_is_one_true_blade_chord(physical_chord, one_chord):
     cascade and physical_chord metres for a dimensional one, whatever the stagger."""
     settings = config.GridSettings(n_passage=31, n_eta=21)
     cascade = make_cascade(CascadeSpec(blade_type="NACA65", solidity=1.2, stagger_deg=40.0, cl0=0.8,
-                                       t_max_over_c=0.08, physical_chord=physical_chord))
+                                       t_max_over_c=0.08, physical_chord=physical_chord, surface_continuity="C1"))
     assert settings.upstream_extension_chords * cascade.active.chord == pytest.approx(one_chord, rel=1e-12)
     assert settings.downstream_extension_chords * cascade.active.chord == pytest.approx(one_chord, rel=1e-12)
 

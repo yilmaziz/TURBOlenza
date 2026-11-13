@@ -41,13 +41,18 @@ from turbolenza.b2b.geometry import CascadeSpec, make_cascade
 
 # The EXAMPLE (65-(12A10)10 at 33 deg), a negative-stagger sharp-TE blade, and edge cases of
 # grid.py: a thin nose that folds, a steep nose, a long Kovach tail, a suction-side tail.
-SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10)
+SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,
+                   surface_continuity="C1")
 OTHER = CascadeSpec(blade_type="NACA65", solidity=1.5, stagger_deg=-20.0, cl0=0.4, t_max_over_c=0.06,
-                    profile_variant="emery_base")
-THIN = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=50.0, cl0=1.6, t_max_over_c=0.04)
-STEEP = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=1.6, t_max_over_c=0.10)
-LONG_TAIL = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=0.0, t_max_over_c=0.04)
-SUCTION_TAIL = CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10)
+                    profile_variant="emery_base", surface_continuity="C1")
+THIN = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=50.0, cl0=1.6, t_max_over_c=0.04,
+                   surface_continuity="C1")
+STEEP = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=1.6, t_max_over_c=0.10,
+                    surface_continuity="C1")
+LONG_TAIL = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=60.0, cl0=0.0, t_max_over_c=0.04,
+                        surface_continuity="C1")
+SUCTION_TAIL = CascadeSpec(blade_type="NACA65", solidity=0.8, stagger_deg=-30.0, cl0=1.2, t_max_over_c=0.10,
+                           surface_continuity="C1")
 EDGE_CASES = (SPEC, OTHER, THIN, STEEP, LONG_TAIL, SUCTION_TAIL)
 FINE = replace(SPEC, n_camber_stations=1601)
 SETTINGS = GridSettings(n_passage=31, n_eta=21)

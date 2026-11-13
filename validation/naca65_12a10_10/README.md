@@ -6,8 +6,8 @@ M₁ 0.650).
 
 | File | Content | Used by |
 |---|---|---|
-| `Dunavant_Aungier_Fix.csv` | surface Mach number against x/c, digitized: suction and pressure side of the experiment and of Aungier's potential-flow curve. The corrected M₁ 0.65 data (2026-11-13) | `scripts/compare_dunavant_aungier.py` |
-| `Dunavant_Aungier_Data.csv` | the earlier digitization in the same layout, superseded by the file above; kept for the record | no script |
+| `Dunavant_Aungier_Fix.csv` | surface Mach number against x/c: suction and pressure side of the experiment and of Aungier's potential-flow curve, digitized from Aungier (2003) Fig. 5-6 with WebPlotDigitizer by the project author. The corrected M₁ 0.65 data (2026-11-13), the trusted validation data of this case | `scripts/compare_dunavant_aungier.py` |
 
-Layout of both files: a header row naming four series, a header row `X,Y` for each, then the
-points; a series may end before the others.
+Layout: a header row naming four series, a header row `X,Y` for each, then the points; a
+series may end before the others. (An earlier digitization, `Dunavant_Aungier_Data.csv`, was
+superseded by this file and removed.)

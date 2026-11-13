@@ -95,7 +95,7 @@ MASS_FLOW_PER_DEPTH_OVERRIDE = None     # kg/(m s) per passage and unit depth
 # 4. GRID SETTINGS
 # ============================================================
 
-GRID_LEVEL = "medium"                       # None: the explicit N_PASSAGE x N_ETA grid below. Or a
+GRID_LEVEL = "very_fine"                       # None: the explicit N_PASSAGE x N_ETA grid below. Or a
                                         # geometry-driven standard grid (grid.py section 9):
                                         # "very_coarse", "coarse", "medium", "fine", "very_fine"
                                         # (then set N_PASSAGE = N_ETA = None; the extensions

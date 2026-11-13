@@ -27,10 +27,20 @@ NACA 65 construction [Aungier 2003 Secs. 4.1, 4.2, Table 4-1; standard NACA prac
           y/c = -(cl0 / 4 pi) [ (1 - x) ln(1 - x) + x ln x ],
       which Table 4-1 tabulates for Cl0 = 1; the printed values agree with it to 2.3e-5 c.
       Ordinates scale linearly with cl0.
-    - Thickness: the corrected column, interpolated by PCHIP in sqrt(station). PCHIP cannot
-      overshoot at the blunt nose or the thin TE, and a nose that grows like sqrt(x) is
-      nearly straight in sqrt(x). The station is distance along the camberline, s / S,
-      not x/c.
+    - Thickness: the corrected column, continued between its stations in z = sqrt(station)
+      (a nose that grows like sqrt(x) is nearly straight in z) by one of two reconstructions,
+      both exact at every station (CascadeSpec.thickness_reconstruction):
+        "quintic_natural_sqrt" (the C2 default since 2026-11-13): the interpolating quintic
+          spline with h''' = h'''' = 0 at both ends, the interpolant of least int h'''^2; C4,
+          so the surfaces have no curvature feature at the stations. Its maximum lies
+          between the stations, 0.099961 at station 0.4098 (the quadratic through the three
+          largest ordinates gives 0.099956 at 0.4093); positive, one maximum, monotone on
+          either side.
+        "pchip_sqrt" (legacy; the C1 default): PCHIP, C1 only. Its second derivative jumps
+          at every station, which leaves a curvature sawtooth locked to the 0.05 station
+          spacing (0.17 /c rms mid-chord) and, through the potential flow, a suction-side
+          Mach ripple; it pins the maximum to the table's 0.09992 at station 0.40.
+      The station is distance along the camberline, s / S, not x/c.
     - Surfaces: half the thickness laid off along the camberline normal,
       X = X_c +- (t / 2) n_c, from the first table station (0.005) to the TE.
     - LE: a circle of radius R_LE = 0.00687 f^2 (f the thickness scale factor; the nose is
@@ -48,9 +58,11 @@ NACA 65 construction [Aungier 2003 Secs. 4.1, 4.2, Table 4-1; standard NACA prac
 
     t_max_over_c is the nominal thickness ratio of the NACA designation (0.10 for a
     "65-(12A10)10"), and the corrected table is scaled by t_max_over_c / 0.10. So 0.10
-    keeps Table 4-1 exactly, including its own maximum of 0.09992 at station 0.40: the
-    table is not renormalized to peak at 0.10000. The true maximum thickness is
-    metadata["max_thickness_over_c"] = 0.9992 t_max_over_c.
+    keeps Table 4-1 exactly at every station, including its largest ordinate 0.09992 at
+    station 0.40: the table is not renormalized to peak at 0.10000. The true maximum
+    thickness is metadata["max_thickness_over_c"] (with "base_max_thickness" and
+    "base_max_thickness_station" at t/c 0.10): 0.9992 t_max_over_c at station 0.40 for
+    "pchip_sqrt", 0.99961 t_max_over_c at station 0.4098 for "quintic_natural_sqrt".
 
 Two camberlines
     camberline is the actual A10 mean line, and it alone builds the surfaces. Its slope is
@@ -88,12 +100,13 @@ Lengths
     lengths grid.py uses: the same as normalized when physical_chord is None.
 
 Surface continuity (CascadeSpec.surface_continuity, the one switch)
-    "C1", the default, is the construction above as it is: the validated baseline, unchanged
-    bit for bit. Its surfaces are the polylines, and the curve they sample is C1 only: the
-    PCHIP thickness jumps the curvature at every table station (up to 3 /c near the nose,
-    1.2 /c mid-chord), the LE fair meets the surface with a 0.006-0.008 deg kink, the Kovach
+    "C1", the default, is the construction above as it is, with the legacy PCHIP thickness:
+    the validated baseline, unchanged bit for bit. Its surfaces are the polylines, and the
+    curve they sample is C1 only: the PCHIP thickness jumps the curvature at every table
+    station (up to 3 /c near the nose, 1.2 /c mid-chord), the LE fair meets the surface with a 0.006-0.008 deg kink, the Kovach
     TE fair keeps the tangent (to 1e-7 rad) but jumps the curvature by about 1/R_TE, and the
-    Kovach start, station 0.60, is a corner (0.08 deg at t/c 0.10); the emery_base closing
+    Kovach start, station 0.60, is a corner (0.08 deg at t/c 0.10; 0.007 deg on the C1
+    construction with the quintic thickness, the C2 source); the emery_base closing
     segment meets the surface at x/c 0.999 at a corner of a few degrees.
     naca65_reference_surfaces gives each C1 surface as its chain of analytic pieces with
     exact derivatives; every C1 vertex lies on it to C2_ANCHOR_TOL.
@@ -101,8 +114,10 @@ Surface continuity (CascadeSpec.surface_continuity, the one switch)
     "C2" is the robust design geometry: per surface one clamped quintic B-spline
     X(u) = (m(u), y(u)) (C4 at its simple knots) representing, by least squares, a target
     made of two parts that meet G2 at an anchor (fit_c2_surface):
-    - Downstream of the anchor, the C1 table surface as the C2 fit sees it (SmoothedSurface):
-      at every junction where C1's curvature jumps or its tangent breaks, the kink of the
+    - Downstream of the anchor, the C1 table surface (built with the same thickness
+      reconstruction, the quintic by default: then only the LE fair, the Kovach start and the
+      TE leave junctions to smooth) as the C2 fit sees it (SmoothedSurface): at every
+      junction where C1's curvature jumps or its tangent breaks, the kink of the
       tangent angle is replaced by its convolution with the positive kernel
       (35/32)(1 - x^2)^3 of half-width a, so the curvature runs monotonically from one side
       to the other, with no overshoot. a is the widest transition that leaves at most
@@ -166,7 +181,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.integrate import cumulative_trapezoid
-from scipy.interpolate import BSpline, CubicSpline, PchipInterpolator
+from scipy.interpolate import BSpline, CubicSpline, PchipInterpolator, PPoly, make_interp_spline
 from scipy.linalg import lstsq, null_space, solve
 from scipy.optimize import brentq, minimize_scalar, nnls
 from scipy.special import xlogy
@@ -177,6 +192,8 @@ HalfThickness = Callable[[NDArray[np.float64]], NDArray[np.float64]]
 BLADE_TYPES = ("NACA65", "DCA", "C4")
 MEANLINE_TYPES = ("A10",)
 PROFILE_VARIANTS = ("kovach_sandercock", "emery_base")
+THICKNESS_RECONSTRUCTIONS = ("quintic_natural_sqrt", "pchip_sqrt")     # see "Thickness" in the module docstring
+LEGACY_THICKNESS_RECONSTRUCTION = "pchip_sqrt"
 
 # Aungier 2003 Table 4-1, p. 63, NACA 65-series columns, in percent of chord, as printed.
 _TABLE_X_PCT = (
@@ -241,6 +258,9 @@ THROAT_TOL = 1e-9               # chords: suction/pressure throat against the wh
 THICKNESS_RTOL = 2e-3           # inscribed thickness against t_max_over_c
 
 SURFACE_CONTINUITIES = ("C1", "C2")
+# CascadeSpec.thickness_reconstruction None takes the representation's own: the validated C1 construction keeps
+# its legacy PCHIP (bit for bit), the C2 design geometry the curvature-smooth quintic (2026-11-13)
+DEFAULT_THICKNESS_RECONSTRUCTION = MappingProxyType({"C1": LEGACY_THICKNESS_RECONSTRUCTION, "C2": "quintic_natural_sqrt"})
 SLOPE_MIN_COS = math.sqrt(np.finfo(float).eps)  # |cos(beta)| below this: y(m) is singular (metrics.py's threshold)
 
 # C2 quintic representation, see "Surface continuity" in the module docstring. Lengths in chords.
@@ -535,6 +555,14 @@ class CascadeSpec:
     downstream of the LE and with a redesigned, monotone-curvature leading edge, sampled into
     the same arrays (see "Surface continuity" and "The C2 leading edge" in the module
     docstring). Exactly "C1" or "C2".
+
+    thickness_reconstruction chooses how the tabulated thickness is continued between its
+    stations (both are exact at every station; module docstring, "Thickness"):
+    "quintic_natural_sqrt", the curvature-smooth natural quintic spline in sqrt(station), or
+    "pchip_sqrt", the legacy PCHIP, whose curvature jumps at every station. None (the
+    default) takes the representation's own, DEFAULT_THICKNESS_RECONSTRUCTION: "pchip_sqrt"
+    for "C1" (the validated legacy construction, unchanged bit for bit) and
+    "quintic_natural_sqrt" for "C2" (since 2026-11-13; the solver's geometry).
     """
 
     blade_type: str
@@ -547,6 +575,7 @@ class CascadeSpec:
     physical_chord: float | None = None
     n_camber_stations: int = 101
     surface_continuity: str = "C1"
+    thickness_reconstruction: str | None = None
 
 
 @dataclass(frozen=True)
@@ -622,14 +651,19 @@ def make_cascade(spec: CascadeSpec) -> Cascade:
         raise ValueError(f"unknown surface_continuity {spec.surface_continuity!r}; expected one of "
                          f"{SURFACE_CONTINUITIES}")
     stagger = math.radians(spec.stagger_deg)        # the one degree-to-radian conversion
+    reconstruction = (DEFAULT_THICKNESS_RECONSTRUCTION[spec.surface_continuity] if spec.thickness_reconstruction is None
+                      else spec.thickness_reconstruction)
+    _check_thickness_reconstruction(reconstruction)
 
     curves = None
     if spec.blade_type == "NACA65":
         profile = naca65_profile(spec.cl0, spec.t_max_over_c, meanline_type=spec.meanline_type,
-                                 profile_variant=spec.profile_variant, n_camber_stations=spec.n_camber_stations)
+                                 profile_variant=spec.profile_variant, n_camber_stations=spec.n_camber_stations,
+                                 thickness_reconstruction=reconstruction)
         correlation = naca65_throat_correlation(spec.solidity, stagger, spec.cl0, spec.t_max_over_c)
         if spec.surface_continuity == "C2":
-            profile, curves = _naca65_c2_profile(profile, spec.cl0, spec.t_max_over_c, spec.profile_variant)
+            profile, curves = _naca65_c2_profile(profile, spec.cl0, spec.t_max_over_c, spec.profile_variant,
+                                                 reconstruction)
     else:
         raise NotImplementedError(f"blade_type {spec.blade_type!r} is part of the API but not implemented yet; "
                                   "only 'NACA65' is")
@@ -695,8 +729,31 @@ def _corrected_thickness() -> NDArray[np.float64]:
     return thickness
 
 
-BASE_MAX_THICKNESS = float(np.max(_corrected_thickness()))       # 0.09992 at station 0.40
-_BASE_HALF_THICKNESS = PchipInterpolator(np.sqrt(np.array(_TABLE_X_PCT) / 100.0), 0.5 * _corrected_thickness())
+BASE_MAX_THICKNESS = float(np.max(_corrected_thickness()))       # 0.09992 at station 0.40: the table's own maximum
+_TABLE_Z = np.sqrt(np.array(_TABLE_X_PCT) / 100.0)
+# "pchip_sqrt", the legacy reconstruction: C1, exact at the stations; its second derivative jumps at every station
+_BASE_HALF_THICKNESS = PchipInterpolator(_TABLE_Z, 0.5 * _corrected_thickness())
+# "quintic_natural_sqrt": the interpolating quintic spline with h''' = h'''' = 0 at both ends (the interpolant of least
+# int h'''^2), C4, exact at the stations
+_QUINTIC_HALF_THICKNESS = PPoly.from_spline(make_interp_spline(_TABLE_Z, 0.5 * _corrected_thickness(), k=5,
+                                                               bc_type=([(3, 0.0), (4, 0.0)], [(3, 0.0), (4, 0.0)])))
+_HALF_THICKNESS = MappingProxyType({"pchip_sqrt": _BASE_HALF_THICKNESS, "quintic_natural_sqrt": _QUINTIC_HALF_THICKNESS})
+
+
+def _reconstruction_maximum(reconstruction: str) -> tuple[float, float]:
+    """(maximum full thickness, its station) of the base (t/c 0.10) reconstruction. PCHIP keeps
+    the table's own maximum at its station (a monotone interpolant has no peak between
+    stations); a smooth one peaks between the stations 0.35 and 0.45."""
+    if reconstruction == LEGACY_THICKNESS_RECONSTRUCTION:
+        k = int(np.argmax(_corrected_thickness()))
+        return BASE_MAX_THICKNESS, float(_TABLE_X_PCT[k]) / 100.0
+    curve = _HALF_THICKNESS[reconstruction]
+    best = minimize_scalar(lambda z: -float(curve(z)), bounds=(math.sqrt(0.35), math.sqrt(0.45)), method="bounded",
+                           options={"xatol": 1e-12})
+    return 2.0 * float(curve(best.x)), float(best.x) ** 2
+
+
+_RECONSTRUCTION_MAXIMUM = MappingProxyType({name: _reconstruction_maximum(name) for name in THICKNESS_RECONSTRUCTIONS})
 
 
 def a10_camberline(x: ArrayLike, cl0: float) -> NDArray[np.float64]:
@@ -767,30 +824,40 @@ def thickness_scale(t_max_over_c: float) -> float:
     return t_max_over_c / TABLE_T_MAX
 
 
-def _half_thickness(station: ArrayLike, t_nominal: float) -> NDArray[np.float64]:
-    """Half-thickness of the corrected base form at table stations, scaled by t_nominal / 0.10."""
+def _half_thickness(station: ArrayLike, t_nominal: float, reconstruction: str) -> NDArray[np.float64]:
+    """Half-thickness of the corrected base form at table stations, scaled by t_nominal / 0.10,
+    reconstructed between the stations by reconstruction (THICKNESS_RECONSTRUCTIONS)."""
     station = np.asarray(station, dtype=float)
     if np.any((station < 0.0) | (station > 1.0)):
         raise ValueError("station must lie in [0, 1]")
-    return t_nominal / TABLE_T_MAX * _BASE_HALF_THICKNESS(np.sqrt(station))
+    return t_nominal / TABLE_T_MAX * _HALF_THICKNESS[reconstruction](np.sqrt(station))
 
 
-def naca65_base_thickness(station: ArrayLike, t_max_over_c: float) -> NDArray[np.float64]:
+def naca65_base_thickness(station: ArrayLike, t_max_over_c: float, *, thickness_reconstruction: str) -> NDArray[np.float64]:
     """Full thickness t/c of the corrected base distribution at table stations s / S, for
-    the nominal thickness ratio t_max_over_c [Aungier 2003 Table 4-1, corrected]. Its
-    maximum is 0.9992 t_max_over_c, at station 0.40. Without the Kovach modification; the
-    two variants agree up to station 0.60."""
-    return 2.0 * _half_thickness(station, TABLE_T_MAX * thickness_scale(t_max_over_c))
+    the nominal thickness ratio t_max_over_c [Aungier 2003 Table 4-1, corrected], between the
+    stations by thickness_reconstruction. Exact at every table station; its maximum is
+    0.9992 t_max_over_c at station 0.40 for "pchip_sqrt" and 0.99961 t_max_over_c near
+    station 0.41 for "quintic_natural_sqrt". Without the Kovach modification; the two
+    variants agree up to station 0.60."""
+    _check_thickness_reconstruction(thickness_reconstruction)
+    return 2.0 * _half_thickness(station, TABLE_T_MAX * thickness_scale(t_max_over_c), thickness_reconstruction)
+
+
+def _check_thickness_reconstruction(reconstruction: str) -> None:
+    if reconstruction not in THICKNESS_RECONSTRUCTIONS:
+        raise ValueError(f"unknown thickness_reconstruction {reconstruction!r}; expected one of "
+                         f"{THICKNESS_RECONSTRUCTIONS}")
 
 
 def _kovach_half_thickness(station: ArrayLike, end_station: float, end_half: float,
-                           t_nominal: float) -> NDArray[np.float64]:
+                           t_nominal: float, reconstruction: str) -> NDArray[np.float64]:
     """Half-thickness with the Kovach & Sandercock TE: the table up to station 0.60, then
     linear to end_half at end_station [Aungier 2003 Sec. 4.2, Kovach & Sandercock 1961]."""
     station = np.asarray(station, dtype=float)
-    start = _half_thickness(KOVACH_START_STATION, t_nominal)
+    start = _half_thickness(KOVACH_START_STATION, t_nominal, reconstruction)
     taper = start + (end_half - start) * (station - KOVACH_START_STATION) / (end_station - KOVACH_START_STATION)
-    return np.where(station <= KOVACH_START_STATION, _half_thickness(station, t_nominal), taper)
+    return np.where(station <= KOVACH_START_STATION, _half_thickness(station, t_nominal, reconstruction), taper)
 
 
 # ---------------------------------------------------------------------------------------
@@ -837,14 +904,15 @@ def naca65_throat_correlation(solidity: float, stagger: float, cl0: float, t_max
 # ---------------------------------------------------------------------------------------
 
 def naca65_profile(cl0: float, t_max_over_c: float, *, meanline_type: str, profile_variant: str,
-                   n_camber_stations: int) -> BladeProfile:
+                   n_camber_stations: int, thickness_reconstruction: str) -> BladeProfile:
     """An isolated NACA 65 blade in the blade frame, chord 1 [Aungier 2003 Secs. 4.1, 4.2].
     See the module docstring for the construction. No defaults here: they live in
     CascadeSpec only, so they cannot drift."""
     _check_naca65_inputs(cl0, t_max_over_c, meanline_type, profile_variant, n_camber_stations)
+    _check_thickness_reconstruction(thickness_reconstruction)
     t_nominal = TABLE_T_MAX * thickness_scale(t_max_over_c)
     try:
-        contour = _naca65_contour(cl0, t_nominal, profile_variant, n_camber_stations)
+        contour = _naca65_contour(cl0, t_nominal, profile_variant, n_camber_stations, thickness_reconstruction)
     except (ValueError, RuntimeError, np.linalg.LinAlgError) as error:
         raise GeometryError(f"NACA 65 construction failed for cl0={cl0}, t_max_over_c={t_max_over_c}: {error}") from error
 
@@ -865,7 +933,7 @@ def naca65_profile(cl0: float, t_max_over_c: float, *, meanline_type: str, profi
         chi_le=chi_le,
         chi_te=chi_te,
         metadata=MappingProxyType(_naca65_metadata(cl0, t_max_over_c, meanline_type, profile_variant,
-                                                   n_camber_stations)),
+                                                   n_camber_stations, thickness_reconstruction)),
     )
 
 
@@ -889,8 +957,9 @@ def _check_naca65_inputs(cl0: float, t_max_over_c: float, meanline_type: str, pr
 
 
 def _naca65_metadata(cl0: float, t_max_over_c: float, meanline_type: str, profile_variant: str,
-                     n_camber_stations: int) -> dict[str, Any]:
+                     n_camber_stations: int, thickness_reconstruction: str) -> dict[str, Any]:
     kovach = profile_variant == "kovach_sandercock"
+    base_max, base_max_station = _RECONSTRUCTION_MAXIMUM[thickness_reconstruction]
     return {
         "designation": f"NACA 65-({10.0 * cl0:g}{meanline_type}){100.0 * t_max_over_c:g}",
         "source_tables": TABLE_SOURCE,
@@ -898,9 +967,15 @@ def _naca65_metadata(cl0: float, t_max_over_c: float, meanline_type: str, profil
         "camberline": "a = 1.0 mean line, closed form, scaled by cl0",
         "thickness_station_reading": STATION_READING,
         "thickness_input": "nominal NACA thickness ratio; table scaled by t_max_over_c / 0.10",
-        "base_max_thickness": BASE_MAX_THICKNESS,
+        "thickness_reconstruction": thickness_reconstruction,
+        "thickness_interpolation": ("legacy PCHIP in sqrt(station): C1, exact at the table stations"
+                                    if thickness_reconstruction == LEGACY_THICKNESS_RECONSTRUCTION else
+                                    "natural quintic spline in sqrt(station): C4, exact at the table stations"),
+        "base_max_thickness": base_max,
+        "base_max_thickness_station": base_max_station,
+        "table_max_thickness": BASE_MAX_THICKNESS,
         "thickness_scale_factor": thickness_scale(t_max_over_c),
-        "max_thickness_over_c": thickness_scale(t_max_over_c) * BASE_MAX_THICKNESS,
+        "max_thickness_over_c": thickness_scale(t_max_over_c) * base_max,
         "leading_edge": f"nose circle R_LE = {TABLE_LE_RADIUS} (t_max_over_c / {TABLE_T_MAX})^2 "
                         "through the LE point, quintic fairs to station 0.005",
         "trailing_edge": (f"Kovach-Sandercock: table to station {KOVACH_START_STATION}, straight taper "
@@ -923,7 +998,8 @@ class _Contour:
     te_center: NDArray[np.float64] | None
 
 
-def _naca65_contour(cl0: float, t_nominal: float, profile_variant: str, n_camber_stations: int) -> _Contour:
+def _naca65_contour(cl0: float, t_nominal: float, profile_variant: str, n_camber_stations: int,
+                    reconstruction: str) -> _Contour:
     """Build the closed contour [standard NACA construction, Aungier 2003 Sec. 4.1, Table 4-1;
     "kovach_sandercock": Sec. 4.2, Kovach & Sandercock 1961].
 
@@ -936,10 +1012,10 @@ def _naca65_contour(cl0: float, t_nominal: float, profile_variant: str, n_camber
     to the LE closure.
     """
     if profile_variant == "kovach_sandercock":
-        half, x_end, te_center = _kovach_closure(cl0, t_nominal)
+        half, x_end, te_center = _kovach_closure(cl0, t_nominal, reconstruction)
     else:
         def half(station: NDArray[np.float64]) -> NDArray[np.float64]:
-            return _half_thickness(station, t_nominal)
+            return _half_thickness(station, t_nominal, reconstruction)
         x_end, te_center = 1.0 - XI_MIN, None
 
     edge = math.acos(1.0 - 2.0 * XI_MIN)
@@ -1038,7 +1114,7 @@ def _nose_fair(x_first: float, cl0: float, half: HalfThickness, side: float, cen
     return center + rho[:, None] * _polar(side * (start + span * u), nose_axis), start
 
 
-def _kovach_closure(cl0: float, t_nominal: float) -> tuple[HalfThickness, float, NDArray[np.float64]]:
+def _kovach_closure(cl0: float, t_nominal: float, reconstruction: str) -> tuple[HalfThickness, float, NDArray[np.float64]]:
     """Thickness law, last surface station and TE circle center of the Kovach TE.
 
     The circle (radius KOVACH_TE_RADIUS) is centered on the mean line and passes through
@@ -1050,7 +1126,7 @@ def _kovach_closure(cl0: float, t_nominal: float) -> tuple[HalfThickness, float,
     length = camberline_length(cl0)
     station_center = float(camberline_station(x_center, cl0))
     run = (station_center - KOVACH_START_STATION) * length
-    h_start = float(_half_thickness(KOVACH_START_STATION, t_nominal))
+    h_start = float(_half_thickness(KOVACH_START_STATION, t_nominal, reconstruction))
 
     taper_angle = np.arccos(r / np.hypot(h_start, run)) - np.arctan2(run, h_start)
     station_tangent = station_center + r * np.sin(taper_angle) / length
@@ -1058,7 +1134,7 @@ def _kovach_closure(cl0: float, t_nominal: float) -> tuple[HalfThickness, float,
     x_tangent = brentq(lambda q: camberline_station(q, cl0) - station_tangent, x_center, 1.0 - XI_MIN)
 
     def half(station: NDArray[np.float64]) -> NDArray[np.float64]:
-        return _kovach_half_thickness(station, station_tangent, half_tangent, t_nominal)
+        return _kovach_half_thickness(station, station_tangent, half_tangent, t_nominal, reconstruction)
 
     return half, x_tangent, np.array([x_center, float(a10_camberline(x_center, cl0))])
 
@@ -1319,8 +1395,8 @@ def _interval_lengths(evaluate: PieceEvaluator, tau: NDArray[np.float64]) -> NDA
     return np.sum(0.5 * (b - a)[:, None] * _GAUSS_WEIGHTS[None] * speed, axis=1)
 
 
-def naca65_reference_surfaces(cl0: float, t_max_over_c: float, *,
-                              profile_variant: str) -> tuple[ReferenceSurface, ReferenceSurface]:
+def naca65_reference_surfaces(cl0: float, t_max_over_c: float, *, profile_variant: str,
+                              thickness_reconstruction: str) -> tuple[ReferenceSurface, ReferenceSurface]:
     """(suction, pressure) of the C1 NACA 65 blade of naca65_profile as ReferenceSurfaces, in
     the blade frame at chord 1: the LE circle, the LE fair, the surface X_c + side (t/2) n_c
     cut at every thickness-table station (and at the Kovach start, station 0.60), then the
@@ -1329,18 +1405,19 @@ def naca65_reference_surfaces(cl0: float, t_max_over_c: float, *,
     _naca65_contour, from the same functions. They do not depend on n_camber_stations,
     which only sets where the C1 polyline samples them."""
     _check_naca65_inputs(cl0, t_max_over_c, MEANLINE_TYPES[0], profile_variant, MIN_CAMBER_STATIONS)
-    return _naca65_reference_surfaces(cl0, t_max_over_c, profile_variant)
+    _check_thickness_reconstruction(thickness_reconstruction)
+    return _naca65_reference_surfaces(cl0, t_max_over_c, profile_variant, thickness_reconstruction)
 
 
 @lru_cache(maxsize=32)
-def _naca65_reference_surfaces(cl0: float, t_max_over_c: float,
-                               profile_variant: str) -> tuple[ReferenceSurface, ReferenceSurface]:
+def _naca65_reference_surfaces(cl0: float, t_max_over_c: float, profile_variant: str,
+                               reconstruction: str) -> tuple[ReferenceSurface, ReferenceSurface]:
     t_nominal = TABLE_T_MAX * thickness_scale(t_max_over_c)
     if profile_variant == "kovach_sandercock":
-        half, x_end, te_center = _kovach_closure(cl0, t_nominal)
+        half, x_end, te_center = _kovach_closure(cl0, t_nominal, reconstruction)
     else:
         def half(station: NDArray[np.float64]) -> NDArray[np.float64]:
-            return _half_thickness(station, t_nominal)
+            return _half_thickness(station, t_nominal, reconstruction)
         x_end, te_center = 1.0 - XI_MIN, None
     x_first = brentq(lambda q: camberline_station(q, cl0) - FIRST_TABLE_STATION, XI_MIN, 2.0 * LE_TANGENT_X)
     radius = TABLE_LE_RADIUS * (t_nominal / TABLE_T_MAX) ** 2
@@ -1349,11 +1426,12 @@ def _naca65_reference_surfaces(cl0: float, t_max_over_c: float,
     center = -radius * nose_axis
 
     try:
-        landmarks = split_at_leading_edge(_naca65_contour(cl0, t_nominal, profile_variant, MIN_CAMBER_STATIONS).loop)
+        landmarks = split_at_leading_edge(_naca65_contour(cl0, t_nominal, profile_variant, MIN_CAMBER_STATIONS,
+                                                          reconstruction).loop)
         surfaces = []
         for name, side, c1 in (("suction", 1.0, landmarks[0]), ("pressure", -1.0, landmarks[1])):
             pieces, names, labels = _naca65_surface_pieces(cl0, t_nominal, half, side, x_first, x_end, te_center,
-                                                           center, radius, nose_axis)
+                                                           center, radius, nose_axis, reconstruction)
             surface = ReferenceSurface(name, pieces, names, labels, te_center is None, c1[0], c1[-1])
             _anchored_arc_length(surface, c1)
             surfaces.append(surface)
@@ -1377,7 +1455,7 @@ def _anchored_arc_length(surface: ReferenceSurface, polyline: Points) -> NDArray
 
 def _naca65_surface_pieces(cl0: float, t_nominal: float, half: HalfThickness, side: float, x_first: float,
                            x_end: float, te_center: NDArray[np.float64] | None, center: NDArray[np.float64],
-                           radius: float, nose_axis: NDArray[np.float64]
+                           radius: float, nose_axis: NDArray[np.float64], reconstruction: str
                            ) -> tuple[tuple[PieceEvaluator, ...], tuple[str, ...], tuple[str, ...]]:
     """The analytic pieces of one surface (side +1 suction, -1 pressure), LE -> TE, their
     names and the labels of the junctions between them."""
@@ -1420,7 +1498,8 @@ def _naca65_surface_pieces(cl0: float, t_nominal: float, half: HalfThickness, si
         taper = float((values[1] - values[0]) / (far[1] - far[0]))
     for k, ((xa, sa), (xb, sb)) in enumerate(zip(cuts[:-1], cuts[1:])):
         on_taper = kovach and sa >= KOVACH_START_STATION
-        slopes = _taper_slopes(taper) if on_taper else _table_slopes(0.5 * (sa + sb), t_nominal / TABLE_T_MAX)
+        slopes = (_taper_slopes(taper) if on_taper
+                  else _table_slopes(0.5 * (sa + sb), t_nominal / TABLE_T_MAX, reconstruction))
         pieces.append(_surface_piece(cl0, half, side, xa, xb, slopes))
         names.append(f"surface, stations {sa:.4g}-{sb:.4g}" + (" (Kovach taper)" if on_taper else ""))
         if k < len(cuts) - 2:
@@ -1483,21 +1562,32 @@ def _segment_piece(a: NDArray[np.float64], b: NDArray[np.float64]) -> PieceEvalu
     return evaluate
 
 
-def _table_slopes(station: float, scale: float) -> Callable[[NDArray[np.float64]], tuple[NDArray[np.float64], ...]]:
-    """dh/dstation and d2h/dstation2 on the table interval holding station: the PCHIP is
-    cubic in z = sqrt(station) on each interval, h = scale B(z), so
-    h' = scale B' / (2 z) and h'' = scale (B'' - B' / z) / (4 z^2), on that interval's
-    polynomial even at its ends (one-sided values at a table knot)."""
-    pchip = _BASE_HALF_THICKNESS
-    interval = int(np.searchsorted(pchip.x, math.sqrt(station))) - 1
-    c3, c2, c1, _ = pchip.c[:, interval]
-    z0 = pchip.x[interval]
+def _table_slopes(station: float, scale: float,
+                  reconstruction: str) -> Callable[[NDArray[np.float64]], tuple[NDArray[np.float64], ...]]:
+    """dh/dstation and d2h/dstation2 on the table interval holding station: the reconstruction
+    is a polynomial in z = sqrt(station) on each interval (PCHIP cubic, quintic spline of
+    degree 5), h = scale B(z), so h' = scale B' / (2 z) and h'' = scale (B'' - B' / z) / (4 z^2),
+    on that interval's polynomial even at its ends (one-sided values at a table knot; the
+    quintic's are continuous there)."""
+    curve = _HALF_THICKNESS[reconstruction]
+    interval = int(np.searchsorted(curve.x, math.sqrt(station))) - 1
+    z0 = curve.x[interval]
+    if reconstruction == LEGACY_THICKNESS_RECONSTRUCTION:        # the legacy expressions, bit for bit
+        c3, c2, c1, _ = curve.c[:, interval]
+
+        def slopes(sigma: NDArray[np.float64]) -> tuple[NDArray[np.float64], ...]:
+            z = np.sqrt(sigma)
+            d = z - z0
+            b1 = (3.0 * c3 * d + 2.0 * c2) * d + c1
+            b2 = 6.0 * c3 * d + 2.0 * c2
+            return scale * b1 / (2.0 * z), scale * (b2 - b1 / z) / (4.0 * sigma)
+        return slopes
+    first, second = np.polyder(curve.c[:, interval]), np.polyder(curve.c[:, interval], 2)
 
     def slopes(sigma: NDArray[np.float64]) -> tuple[NDArray[np.float64], ...]:
         z = np.sqrt(sigma)
         d = z - z0
-        b1 = (3.0 * c3 * d + 2.0 * c2) * d + c1
-        b2 = 6.0 * c3 * d + 2.0 * c2
+        b1, b2 = np.polyval(first, d), np.polyval(second, d)
         return scale * b1 / (2.0 * z), scale * (b2 - b1 / z) / (4.0 * sigma)
     return slopes
 
@@ -2486,9 +2576,9 @@ NACA65_FIRST_SURFACE_PIECE = 2      # pieces 0, 1 are the legacy LE circle and f
 
 
 @lru_cache(maxsize=32)
-def _naca65_quintic_fits(cl0: float, t_max_over_c: float,
-                         profile_variant: str) -> tuple[C2SurfaceFit, C2SurfaceFit]:
-    suction, pressure = _naca65_reference_surfaces(cl0, t_max_over_c, profile_variant)
+def _naca65_quintic_fits(cl0: float, t_max_over_c: float, profile_variant: str,
+                         reconstruction: str) -> tuple[C2SurfaceFit, C2SurfaceFit]:
+    suction, pressure = _naca65_reference_surfaces(cl0, t_max_over_c, profile_variant, reconstruction)
     try:
         return tuple(fit_c2_surface(reference, _naca65_nose(cl0, t_max_over_c, reference.leading_edge_point),
                                     side, NACA65_FIRST_SURFACE_PIECE)
@@ -2499,13 +2589,14 @@ def _naca65_quintic_fits(cl0: float, t_max_over_c: float,
         raise GeometryError(f"C2 fit failed for cl0={cl0}, t_max_over_c={t_max_over_c}: {error}") from error
 
 
-def _naca65_c2_profile(profile: BladeProfile, cl0: float, t_max_over_c: float, profile_variant: str
+def _naca65_c2_profile(profile: BladeProfile, cl0: float, t_max_over_c: float, profile_variant: str,
+                       reconstruction: str
                        ) -> tuple[BladeProfile, tuple[tuple[ParametricBladeCurve, NDArray[np.float64]], ...]]:
     """The C1 profile with its surfaces replaced by the C2 curves, sampled where the C1
     polyline has its vertices: their reference arc lengths mapped by C2SurfaceFit.parameter
     (proportionally over the LE zone, shifted after it), and those curves with their sample
     parameters. Every other field is the C1 one."""
-    fits = _naca65_quintic_fits(cl0, t_max_over_c, profile_variant)
+    fits = _naca65_quintic_fits(cl0, t_max_over_c, profile_variant, reconstruction)
     surfaces, curves = [], []
     for fit, polyline in zip(fits, (profile.suction_surface, profile.pressure_surface)):
         reference, curve = fit.reference, fit.curve

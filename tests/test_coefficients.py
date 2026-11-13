@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.coefficients: the fields A, B, C, D, E of Aungier's Eq. 5-21
+Tests for turbolenza.b2b.coefficients: the fields A, B, C, D, E of Aungier's Eq. 5-21
 (Eqs. 5-22 to 5-26) from GridMetrics, a frozen density field and the mass flow per unit
 depth, in physical (c_ref) or normalized (c_ref = None) mode.
 
@@ -67,11 +67,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from potential_flow_solver import coefficients as cf
-from potential_flow_solver import metrics as mt
-from potential_flow_solver.config import GridSettings
-from potential_flow_solver.geometry import CascadeSpec, make_cascade
-from potential_flow_solver.grid import make_grid
+from turbolenza.b2b import coefficients as cf
+from turbolenza.b2b import metrics as mt
+from turbolenza.b2b.config import GridSettings
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade
+from turbolenza.b2b.grid import make_grid
 
 SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,
                    surface_continuity="C2")
@@ -184,7 +184,7 @@ def test_the_public_names():
 
 def test_discretization_still_imports_its_name():
     """discretization.py (an interface, not changed here) imports Coefficients."""
-    from potential_flow_solver import discretization
+    from turbolenza.b2b import discretization
     assert discretization.Coefficients is cf.CoefficientFields
 
 
@@ -218,7 +218,7 @@ def test_the_module_reads_metrics_and_nothing_else():
     imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     imported |= {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     outside = {name for name in imported if name.split(".")[0] not in sys.stdlib_module_names}
-    assert outside == {"numpy", "numpy.typing", "potential_flow_solver.metrics"}
+    assert outside == {"numpy", "numpy.typing", "turbolenza.b2b.metrics"}
     on = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):

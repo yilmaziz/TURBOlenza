@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.linear_solver: the sparse direct solve of the assembled
+Tests for turbolenza.b2b.linear_solver: the sparse direct solve of the assembled
 F Psi = Q and the rebuilt psi field.
 
 What is checked
@@ -33,9 +33,9 @@ import pytest
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from potential_flow_solver import linear_solver as ls
-from potential_flow_solver import matrix_assembly as ma
-from potential_flow_solver.boundary_conditions import Elimination, Term
+from turbolenza.b2b import linear_solver as ls
+from turbolenza.b2b import matrix_assembly as ma
+from turbolenza.b2b.boundary_conditions import Elimination, Term
 
 import test_matrix_assembly as tma        # the assembly tests' real pipeline and local-equation evaluator
 

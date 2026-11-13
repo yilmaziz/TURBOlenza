@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.monitor: the live convergence monitor and the console progress
+Tests for turbolenza.b2b.monitor: the live convergence monitor and the console progress
 lines, observers of a solve that never feed back. Matplotlib runs on the Agg backend: no window
 opens, the figure is drawn all the same.
 
@@ -37,11 +37,11 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-from potential_flow_solver import config as cf  # noqa: E402
-from potential_flow_solver import eos  # noqa: E402
-from potential_flow_solver import monitor as mon  # noqa: E402
-from potential_flow_solver import solver as sv  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade  # noqa: E402
+from turbolenza.b2b import config as cf  # noqa: E402
+from turbolenza.b2b import eos  # noqa: E402
+from turbolenza.b2b import monitor as mon  # noqa: E402
+from turbolenza.b2b import solver as sv  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade  # noqa: E402
 
 AIR = eos.CaloricallyPerfectGas(gamma=1.4, gas_constant=287.05)
 C_REF = 0.1
@@ -95,8 +95,8 @@ def figures():
 
 
 def test_the_solver_does_not_import_matplotlib_unless_asked():
-    code = ("import sys; sys.path.insert(0, r'%s'); import potential_flow_solver.solver, potential_flow_solver.monitor; "
-            "print('matplotlib' in sys.modules)" % ROOT)
+    code = ("import sys; sys.path.insert(0, r'%s'); import turbolenza.b2b.solver, turbolenza.b2b.monitor; "
+            "print('matplotlib' in sys.modules)" % (ROOT / "src"))
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip()
     assert out == "False"
 

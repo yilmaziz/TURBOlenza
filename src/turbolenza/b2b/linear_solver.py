@@ -63,7 +63,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from numpy.typing import NDArray
 
-from potential_flow_solver.matrix_assembly import AssemblyResult, MatrixAssemblyError, implied_residuals, reconstruct
+from turbolenza.b2b.matrix_assembly import AssemblyResult, MatrixAssemblyError, implied_residuals, reconstruct
 
 
 class LinearSolveError(ValueError):

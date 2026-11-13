@@ -56,7 +56,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT, Path(__file__).resolve().parent):
+for path in (ROOT / "src", Path(__file__).resolve().parent):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -64,10 +64,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.path import Path as MplPath  # noqa: E402
 
 import link_geometry as lg  # noqa: E402
-from potential_flow_solver import boundary_conditions as bc  # noqa: E402
-from potential_flow_solver import discretization as dz  # noqa: E402
-from potential_flow_solver import grid as gr  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade  # noqa: E402
+from turbolenza.b2b import boundary_conditions as bc  # noqa: E402
+from turbolenza.b2b import discretization as dz  # noqa: E402
+from turbolenza.b2b import grid as gr  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade  # noqa: E402
 
 SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,
                    surface_continuity="C2")
@@ -436,7 +436,7 @@ def real_grid_comparison(cascade, levels=(61, 101, 201, 401, 801, 1601), n_eta: 
     against the exact computational derivatives on each row's own (side-line) mapping."""
     out = {key: [] for key in ("dm", "TE psi_m CENTRAL", "TE psi_m FORWARD", "TE psi_mm CENTRAL", "TE psi_mm FORWARD",
                                "LE psi_m central", "LE psi_m backward", "LE psi_mm central", "LE psi_mm backward")}
-    from potential_flow_solver.config import GridSettings
+    from turbolenza.b2b.config import GridSettings
 
     for n in levels:
         g = gr.make_grid(cascade, GridSettings(n_passage=n, n_eta=n_eta), math.radians(45.0))
@@ -459,7 +459,7 @@ def real_grid_comparison(cascade, levels=(61, 101, 201, 401, 801, 1601), n_eta: 
 
 
 def coefficient_comparison(cascade) -> list:
-    from potential_flow_solver.boundary_conditions import build_boundary_conditions
+    from turbolenza.b2b.boundary_conditions import build_boundary_conditions
     rows = []
     for n_passage in (101, 401):
         g, metrics, co, _ = lg.build_case(cascade, n_passage, 41)
@@ -952,7 +952,7 @@ def main() -> None:
           f"{ex_me:+.3f}); two stations upstream: {info['ref_m']:.1e}, {info['ref_me']:.1e}")
 
     # 5 failure modes
-    from potential_flow_solver.boundary_conditions import build_boundary_conditions
+    from turbolenza.b2b.boundary_conditions import build_boundary_conditions
     bcs = build_boundary_conditions(base["g"])
     refused = []
     for station in (base["f"], base["l"]):

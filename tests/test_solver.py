@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.solver (the density loop at a fixed discharge angle, and the
+Tests for turbolenza.b2b.solver (the density loop at a fixed discharge angle, and the
 density + Kutta coupled loop of solve) and convergence (the change norms and the stop tests).
 
     solve_at_exit_angle: DENSITY-COUPLED / FIXED-DISCHARGE-ANGLE SOLUTION, NOT FINAL AUNGIER
@@ -67,17 +67,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from potential_flow_solver import config as cf
-from potential_flow_solver import convergence, eos, kutta
-from potential_flow_solver import solver as sv
-from potential_flow_solver.boundary_conditions import build_boundary_conditions
-from potential_flow_solver.coefficients import build_coefficients
-from potential_flow_solver.flow import velocity_components
-from potential_flow_solver.geometry import CascadeSpec, make_cascade
-from potential_flow_solver.grid import make_grid, rebuild_exit, validate_uniform_grid_topology
-from potential_flow_solver.linear_solver import solve_linear_system
-from potential_flow_solver.matrix_assembly import assemble_from_coefficients
-from potential_flow_solver.metrics import build_metrics
+from turbolenza.b2b import config as cf
+from turbolenza.b2b import convergence, eos, kutta
+from turbolenza.b2b import solver as sv
+from turbolenza.b2b.boundary_conditions import build_boundary_conditions
+from turbolenza.b2b.coefficients import build_coefficients
+from turbolenza.b2b.flow import velocity_components
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade
+from turbolenza.b2b.grid import make_grid, rebuild_exit, validate_uniform_grid_topology
+from turbolenza.b2b.linear_solver import solve_linear_system
+from turbolenza.b2b.matrix_assembly import assemble_from_coefficients
+from turbolenza.b2b.metrics import build_metrics
 
 AIR = eos.CaloricallyPerfectGas(gamma=1.4, gas_constant=287.05)
 PT, TT = 101325.0, 288.15

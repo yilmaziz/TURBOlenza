@@ -126,15 +126,15 @@ from dataclasses import dataclass, fields
 import numpy as np
 from numpy.typing import NDArray
 
-from potential_flow_solver.boundary_conditions import BACKWARD_DIFFERENCE, FORWARD_DIFFERENCE, BoundaryConditions
-from potential_flow_solver.coefficients import CoefficientFields
-from potential_flow_solver.config import FlowConditions
-from potential_flow_solver import eos as _eos
-from potential_flow_solver.eos import PerfectGas
-from potential_flow_solver.grid import Grid
-from potential_flow_solver.metrics import ROUND_OFF, GridMetrics, MetricsError
-from potential_flow_solver.metrics import _d_dm as _region_d_dm      # the m-derivative of metrics.py: no stencil
-from potential_flow_solver.metrics import _runs as _m_regions        # leaves its region (module docstring)
+from turbolenza.b2b.boundary_conditions import BACKWARD_DIFFERENCE, FORWARD_DIFFERENCE, BoundaryConditions
+from turbolenza.b2b.coefficients import CoefficientFields
+from turbolenza.b2b.config import FlowConditions
+from turbolenza.b2b import eos as _eos
+from turbolenza.b2b.eos import PerfectGas
+from turbolenza.b2b.grid import Grid
+from turbolenza.b2b.metrics import ROUND_OFF, GridMetrics, MetricsError
+from turbolenza.b2b.metrics import _d_dm as _region_d_dm      # the m-derivative of metrics.py: no stencil
+from turbolenza.b2b.metrics import _runs as _m_regions        # leaves its region (module docstring)
 
 Field = NDArray[np.float64]
 

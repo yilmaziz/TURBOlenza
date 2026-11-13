@@ -26,8 +26,8 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from potential_flow_solver import geometry as g  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from turbolenza.b2b import geometry as g  # noqa: E402
 
 # --- settings ------------------------------------------------------------------------------
 SETTINGS = {

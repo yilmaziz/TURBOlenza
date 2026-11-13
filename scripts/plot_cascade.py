@@ -66,12 +66,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from potential_flow_solver import geometry, grid  # noqa: E402
-from potential_flow_solver.config import GridSettings  # noqa: E402
-from potential_flow_solver.geometry import Cascade, CascadeSpec  # noqa: E402
-from potential_flow_solver.grid import Grid, PassageBoundaries  # noqa: E402
+from turbolenza.b2b import geometry, grid  # noqa: E402
+from turbolenza.b2b.config import GridSettings  # noqa: E402
+from turbolenza.b2b.geometry import Cascade, CascadeSpec  # noqa: E402
+from turbolenza.b2b.grid import Grid, PassageBoundaries  # noqa: E402
 
 # --- Development inputs: edit these ---------------------------------------------------
 EXAMPLE = CascadeSpec(
@@ -124,7 +124,7 @@ PASSAGE_FILL = "#e3eef5"
 
 
 def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Plot a NACA 65 cascade from potential_flow_solver.geometry.")
+    parser = argparse.ArgumentParser(description="Plot a NACA 65 cascade from turbolenza.b2b.geometry.")
     parser.add_argument("--cl0", type=float, default=EXAMPLE.cl0, help="design lift coefficient")
     parser.add_argument("--t-max", type=float, default=EXAMPLE.t_max_over_c,
                         help="nominal thickness ratio of the NACA designation")

@@ -448,8 +448,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import BSpline, PchipInterpolator, PPoly
 
-from potential_flow_solver.config import GridSettings
-from potential_flow_solver.geometry import Cascade
+from turbolenza.b2b.config import GridSettings
+from turbolenza.b2b.geometry import Cascade
 
 INLET, PASSAGE, EXIT = 0, 1, 2      # region of a station: inlet side lines, blade walls, exit side lines
 TOUCH = 1e-12                       # chords: a cut thinner than this touches the blade, it does not cut it, and a
@@ -2326,7 +2326,7 @@ def _standard_checks(grid: Grid, row: _Row, tr: PassageTransitions, cut: _Cut) -
     need(bool(np.all(np.isfinite(grid.nodes))), "finite nodes", REJECT_OTHER, "a node is not finite")
     width = grid.nodes[:, -1, 1] - grid.nodes[:, 0, 1]
     need(bool(np.all(width > row.touch)), "positive width", REJECT_OTHER, f"width {float(min(width)) / chord:.3g} c")
-    from potential_flow_solver.metrics import build_metrics        # metrics imports grid: here, not at the top
+    from turbolenza.b2b.metrics import build_metrics        # metrics imports grid: here, not at the top
     try:
         metrics = build_metrics(grid)
     except Exception as error:                                     # any refusal of metrics.py rejects the candidate

@@ -12,7 +12,7 @@ surface pressure and convergence figures and saves them with CSV and JSON files.
 file needs editing for a normal case change.
 
 Everything numerical stays in the package: this file only states the inputs and calls
-potential_flow_solver.controller (build_case, run_case, format_run_report, plot_run,
+turbolenza.b2b.controller (build_case, run_case, format_run_report, plot_run,
 export_run), the same functions a later GUI will call with its own text boxes in place of
 these constants.
 
@@ -168,12 +168,12 @@ import sys                                                                      
 from pathlib import Path                                                        # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
 
 def settings_from_constants():
     """The constants above as one CaseSettings (the object a GUI would fill)."""
-    from potential_flow_solver.controller import CaseSettings
+    from turbolenza.b2b.controller import CaseSettings
 
     return CaseSettings(
         case_name=CASE_NAME, solver_mode=SOLVER_MODE, fixed_exit_angle_deg=FIXED_EXIT_ANGLE_DEG,
@@ -201,7 +201,7 @@ def main() -> int:
     if not (SHOW_LIVE_MONITOR or SHOW_FINAL_PLOTS):
         import matplotlib
         matplotlib.use("Agg")                   # nothing is shown: draw without any window
-    from potential_flow_solver import controller
+    from turbolenza.b2b import controller
 
     # BUILD CASE
     try:

@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.config: the naming and unit conventions of the solver
+Tests for turbolenza.b2b.config: the naming and unit conventions of the solver
 inputs. Nothing reads these values yet, so only the conventions themselves are checked.
 """
 
@@ -9,8 +9,8 @@ from dataclasses import fields
 
 import pytest
 
-from potential_flow_solver import config
-from potential_flow_solver.geometry import CascadeSpec, make_cascade
+from turbolenza.b2b import config
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade
 
 CONFIG_CLASSES = (config.GridSettings, config.FlowConditions, config.IterationSettings, config.SolverConfig)
 
@@ -47,7 +47,7 @@ def test_one_extension_chord_is_one_true_blade_chord(physical_chord, one_chord):
 
 # --- the thermodynamic conventions of the inputs (2026-11-13) -------------------------------------
 
-from potential_flow_solver import eos  # noqa: E402
+from turbolenza.b2b import eos  # noqa: E402
 
 STOPPING = dict(density_tolerance=1.0, max_density_iterations=1, kutta_tolerance=1.0, max_kutta_iterations=1)
 

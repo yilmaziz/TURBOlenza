@@ -99,12 +99,12 @@ import numpy as np
 import scipy.sparse as sp
 from numpy.typing import NDArray
 
-from potential_flow_solver.boundary_conditions import (DOWNSTREAM, LOWER_WALL, PERIODIC, UPPER_WALL, UPSTREAM,
+from turbolenza.b2b.boundary_conditions import (DOWNSTREAM, LOWER_WALL, PERIODIC, UPPER_WALL, UPSTREAM,
                                                        BoundaryConditions, Elimination, Relation)
-from potential_flow_solver.coefficients import CoefficientFields
-from potential_flow_solver.discretization import (InteriorStencil, PeriodicPDERow, build_interior_stencil,
+from turbolenza.b2b.coefficients import CoefficientFields
+from turbolenza.b2b.discretization import (InteriorStencil, PeriodicPDERow, build_interior_stencil,
                                                   build_periodic_pde_rows)
-from potential_flow_solver.metrics import GridMetrics
+from turbolenza.b2b.metrics import GridMetrics
 
 Node = tuple[int, int]
 

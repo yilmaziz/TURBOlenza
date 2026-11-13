@@ -31,14 +31,14 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 
-from potential_flow_solver.coefficients import build_coefficients  # noqa: E402
-from potential_flow_solver.config import GridSettings  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade  # noqa: E402
-from potential_flow_solver.grid import make_grid  # noqa: E402
-from potential_flow_solver.metrics import build_metrics  # noqa: E402
+from turbolenza.b2b.coefficients import build_coefficients  # noqa: E402
+from turbolenza.b2b.config import GridSettings  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade  # noqa: E402
+from turbolenza.b2b.grid import make_grid  # noqa: E402
+from turbolenza.b2b.metrics import build_metrics  # noqa: E402
 
 SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,
                    surface_continuity="C2")

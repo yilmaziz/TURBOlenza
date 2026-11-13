@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.controller and scripts/run_full_solver.py: the user-facing run
+Tests for turbolenza.b2b.controller and scripts/run_full_solver.py: the user-facing run
 layer (case construction, the timed solve, reports, figures, files). Small fast cases only:
 the 33 deg verification cascade at a fixed exit angle (27 passes; 28 before the region-wise
 psi_m of flow.py, 2026-11-13) and the M1 0.7 transonic stop
@@ -42,10 +42,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-from potential_flow_solver import controller as ct  # noqa: E402
-from potential_flow_solver import postprocess as pp  # noqa: E402
-from potential_flow_solver import solver as sv  # noqa: E402
-from potential_flow_solver.flow import inlet_state  # noqa: E402
+from turbolenza.b2b import controller as ct  # noqa: E402
+from turbolenza.b2b import postprocess as pp  # noqa: E402
+from turbolenza.b2b import solver as sv  # noqa: E402
+from turbolenza.b2b.flow import inlet_state  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -151,19 +151,19 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 from numpy.typing import NDArray
 
-from potential_flow_solver import convergence, eos, kutta
-from potential_flow_solver.boundary_conditions import BoundaryConditions, build_boundary_conditions
-from potential_flow_solver.coefficients import CoefficientFields, build_coefficients
-from potential_flow_solver.config import SolverConfig
-from potential_flow_solver.convergence import History
-from potential_flow_solver.flow import (FlowField, InletState, InletStateError, inlet_state, station_mass_flow,
+from turbolenza.b2b import convergence, eos, kutta
+from turbolenza.b2b.boundary_conditions import BoundaryConditions, build_boundary_conditions
+from turbolenza.b2b.coefficients import CoefficientFields, build_coefficients
+from turbolenza.b2b.config import SolverConfig
+from turbolenza.b2b.convergence import History
+from turbolenza.b2b.flow import (FlowField, InletState, InletStateError, inlet_state, station_mass_flow,
                                         velocity_components)
-from potential_flow_solver.geometry import Cascade
-from potential_flow_solver.grid import Grid, make_grid, rebuild_exit, validate_uniform_grid_topology
-from potential_flow_solver.linear_solver import LinearSolveResult, solve_linear_system
-from potential_flow_solver.matrix_assembly import assemble_from_coefficients
-from potential_flow_solver.metrics import GridMetrics, build_metrics
-from potential_flow_solver.monitor import MonitorWarning, SolveInfo
+from turbolenza.b2b.geometry import Cascade
+from turbolenza.b2b.grid import Grid, make_grid, rebuild_exit, validate_uniform_grid_topology
+from turbolenza.b2b.linear_solver import LinearSolveResult, solve_linear_system
+from turbolenza.b2b.matrix_assembly import assemble_from_coefficients
+from turbolenza.b2b.metrics import GridMetrics, build_metrics
+from turbolenza.b2b.monitor import MonitorWarning, SolveInfo
 
 LIMITATION = "DENSITY-COUPLED / FIXED-DISCHARGE-ANGLE SOLUTION; NOT FINAL AUNGIER KUTTA-CONVERGED SOLUTION"
 MASS_FLOW_CONSISTENCY = 1e-12   # relative: a given mdot' and the one of the inlet Mach number agree to round-off
@@ -491,10 +491,10 @@ def _observers(live_monitor: bool, verbose: bool, monitor) -> _Observers:
             raise SolverInputError(f"{name} = {value!r}: True or False")
     items = [] if monitor is None else [monitor]
     if live_monitor:
-        from potential_flow_solver.monitor import LiveConvergenceMonitor
+        from turbolenza.b2b.monitor import LiveConvergenceMonitor
         items.append(LiveConvergenceMonitor())
     if verbose:
-        from potential_flow_solver.monitor import ConsoleProgress
+        from turbolenza.b2b.monitor import ConsoleProgress
         items.append(ConsoleProgress())
     return _Observers(items)
 

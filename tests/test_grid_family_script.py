@@ -23,7 +23,7 @@ matplotlib.use("Agg")
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-from potential_flow_solver import grid as gr  # noqa: E402
+from turbolenza.b2b import grid as gr  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 

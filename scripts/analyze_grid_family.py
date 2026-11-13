@@ -70,7 +70,7 @@ from pathlib import Path                                                        
 import numpy as np                                                               # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 OUT = ROOT / OUTPUT_DIR
 LINES: list = []
 LEVEL_INK = ("#9ecae1", "#6baed6", "#3182bd", "#08519c", "#08306b")      # one hue, light (coarse) -> dark (fine)
@@ -119,7 +119,7 @@ def write_csv(name: str, rows: list) -> None:
 
 
 def cascade():
-    from potential_flow_solver.geometry import CascadeSpec, make_cascade
+    from turbolenza.b2b.geometry import CascadeSpec, make_cascade
 
     g = GEOMETRY
     with warnings.catch_warnings():
@@ -136,7 +136,7 @@ def inlet_angle() -> float:
 
 
 def case_settings(level: str, mach: float):
-    from potential_flow_solver import controller as ct
+    from turbolenza.b2b import controller as ct
 
     return ct.CaseSettings(**SOLVER, **GEOMETRY, inlet_mach=mach, grid_level=level, n_passage=None, n_eta=None)
 
@@ -173,8 +173,8 @@ def figure_data(package) -> list:
 # --- 2. the old explicit grids ----------------------------------------------------------------------------------
 
 def old_grid_audit(c, package) -> tuple[list, tuple, int | None]:
-    from potential_flow_solver import grid as gr
-    from potential_flow_solver.config import GridSettings
+    from turbolenza.b2b import grid as gr
+    from turbolenza.b2b.config import GridSettings
 
     tr = package.transitions
     settings = GridSettings(n_passage=61, n_eta=41)
@@ -200,7 +200,7 @@ def old_grid_audit(c, package) -> tuple[list, tuple, int | None]:
 # --- 4. timing --------------------------------------------------------------------------------------------------
 
 def timing_study(c) -> tuple[list, dict]:
-    from potential_flow_solver import grid as gr
+    from turbolenza.b2b import grid as gr
 
     rows = []
     for level in gr.GRID_LEVELS:
@@ -224,10 +224,10 @@ def timing_study(c) -> tuple[list, dict]:
 def solve_level(level: str) -> dict:
     """Build and solve the case on one level (a worker process); the diagnostics as plain data."""
     warnings.simplefilter("ignore")
-    from potential_flow_solver import controller as ct
-    from potential_flow_solver import kutta as kt
-    from potential_flow_solver import postprocess as pp
-    from potential_flow_solver import solver as sv
+    from turbolenza.b2b import controller as ct
+    from turbolenza.b2b import kutta as kt
+    from turbolenza.b2b import postprocess as pp
+    from turbolenza.b2b import solver as sv
 
     case = ct.build_case(case_settings(level, INLET_MACH))
     std = case.standard_grid
@@ -449,7 +449,7 @@ def main(argv=None) -> int:
     import matplotlib
 
     matplotlib.use("Agg")
-    from potential_flow_solver import grid as gr
+    from turbolenza.b2b import grid as gr
 
     OUT.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()

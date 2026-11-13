@@ -39,11 +39,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from potential_flow_solver import grid, metrics  # noqa: E402
-from potential_flow_solver.config import GridSettings  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade  # noqa: E402
+from turbolenza.b2b import grid, metrics  # noqa: E402
+from turbolenza.b2b.config import GridSettings  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade  # noqa: E402
 
 # --- Development settings: edit these ---------------------------------------------------
 EXAMPLE = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,

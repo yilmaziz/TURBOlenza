@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.flow: velocity recovery, psi -> psi_m, psi_eta -> W_m, W_theta
+Tests for turbolenza.b2b.flow: velocity recovery, psi -> psi_m, psi_eta -> W_m, W_theta
 (Aungier 2003 Eqs. 5-18, 5-19) in the normalization of coefficients.py.
 
 What is checked
@@ -35,11 +35,11 @@ import math
 import numpy as np
 import pytest
 
-from potential_flow_solver import boundary_conditions as bc
-from potential_flow_solver import flow as fl
-from potential_flow_solver import grid as gr
-from potential_flow_solver import linear_solver as ls
-from potential_flow_solver.coefficients import build_coefficients
+from turbolenza.b2b import boundary_conditions as bc
+from turbolenza.b2b import flow as fl
+from turbolenza.b2b import grid as gr
+from turbolenza.b2b import linear_solver as ls
+from turbolenza.b2b.coefficients import build_coefficients
 
 import test_matrix_assembly as tma        # the assembly tests' real pipeline
 
@@ -337,8 +337,8 @@ def test_refusals():
 
 # --- inlet closure: inlet Mach number -> inlet state -> mdot' (2026-11-13) ------------------------------------
 
-from potential_flow_solver import eos as _eos                       # noqa: E402
-from potential_flow_solver.config import FlowConditions             # noqa: E402
+from turbolenza.b2b import eos as _eos                       # noqa: E402
+from turbolenza.b2b.config import FlowConditions             # noqa: E402
 
 INLET_AIR = _eos.CaloricallyPerfectGas(gamma=1.4, gas_constant=287.05)
 INLET_PT, INLET_TT = 101325.0, 288.15
@@ -422,9 +422,9 @@ def test_flow_is_kinematic_only_the_static_state_is_eos():
     import re
     from pathlib import Path
     assert not hasattr(fl, "static_state")
-    root = Path(fl.__file__).resolve().parents[1]
+    root = Path(fl.__file__).resolve().parents[3]                    # the repository root
     pattern = re.compile(r"(\bflow|\bfl)\.static_state\b|def static_state\(")
-    hits = [f"{path.relative_to(root)}:{n}" for folder in ("potential_flow_solver", "tests", "scripts")
+    hits = [f"{path.relative_to(root)}:{n}" for folder in ("src/turbolenza/b2b", "tests", "scripts")
             for path in sorted((root / folder).glob("*.py"))
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if pattern.search(line)]
     assert hits == []
@@ -437,7 +437,7 @@ def test_flow_is_kinematic_only_the_static_state_is_eos():
 # f - 1, f, l or l + 1, turning a one-sided stencil the wrong way, moving it one station, lowering it to
 # first order or dropping the wall zero each fails one of them.
 
-from potential_flow_solver import metrics as _metrics          # noqa: E402
+from turbolenza.b2b import metrics as _metrics          # noqa: E402
 
 
 def regime_psi(M, H, f, l):

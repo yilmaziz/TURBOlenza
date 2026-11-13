@@ -1,14 +1,14 @@
 """
 verify_le_velocity_fix.py
 =========================
-Acceptance runs of the 2026-11-13 production fix of potential_flow_solver/flow.py: psi_m is
+Acceptance runs of the 2026-11-13 production fix of src/turbolenza/b2b/flow.py: psi_m is
 taken by m region (metrics.py's three regions, one-sided at the four transition stations
 f - 1, f, l, l + 1) instead of by central differences across the leading and trailing edge.
 
     python scripts/verify_le_velocity_fix.py
 
 Nothing is patched here: every case is the production solver, built by
-potential_flow_solver.controller on the frozen baseline of scripts/diagnose_mach060_vs_065.py
+turbolenza.b2b.controller on the frozen baseline of scripts/diagnose_mach060_vs_065.py
 (61 x 41, lambda_rho = lambda_K = 0.7, all tolerances 1e-8), with the normal sonic stop ON
 (IterationSettings.stop_at_sonic True). One extra run at M 0.70 has the stop off, so that it
 can be compared with the diagnosis run of the same case.
@@ -55,7 +55,7 @@ from pathlib import Path                                                        
 import numpy as np                                                               # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 OUT = ROOT / OUTPUT_DIR
 BEFORE = ROOT / DIAGNOSIS_DIR
 FIELD_KEYS = ("density", "psi", "W", "mach", "pressure", "mach_ss", "mach_ps", "x_c_ss", "x_c_ps")
@@ -280,7 +280,7 @@ def main(argv=None) -> int:
         if isinstance(json.loads((BEFORE / "rows.json").read_text(encoding="utf-8")), list) else \
         json.loads((BEFORE / "rows.json").read_text(encoding="utf-8"))
 
-    from potential_flow_solver import flow as _flow
+    from turbolenza.b2b import flow as _flow
     say("verify_le_velocity_fix: production flow.py (region-wise psi_m), no patch")
     say(f"flow._derivatives from {_flow._derivatives.__module__}; every case checked by check_production before it ran")
     say()

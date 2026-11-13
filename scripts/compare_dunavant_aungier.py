@@ -3,7 +3,7 @@ compare_dunavant_aungier.py
 ===========================
 The blade-surface Mach number of this solver on the geometry-driven MEDIUM grid against
 Dunavant et al.'s measured points and Aungier's potential-flow curve for the NACA 65-(12A10)10
-cascade at M1 = 0.65 (the digitized file potential_flow_solver/Dunavant_Aungier_Fix.csv: x/c
+cascade at M1 = 0.65 (the digitized file validation/naca65_12a10_10/Dunavant_Aungier_Fix.csv: x/c
 and surface Mach number; columns SS_experiment, PS_experiment, SS_potential, PS_potential).
 
     python scripts/compare_dunavant_aungier.py            # solve, plot, save, show
@@ -23,7 +23,7 @@ surface_mach_medium.csv (this solver's wall values) and comparison.txt (the peak
 # SETTINGS
 # ============================================================
 
-DATA = "potential_flow_solver/Dunavant_Aungier_Fix.csv"    # the corrected M 0.65 data (2026-11-13)
+DATA = "validation/naca65_12a10_10/Dunavant_Aungier_Fix.csv"    # the corrected M 0.65 data (2026-11-13)
 OUTPUT_DIR = "outputs/dunavant_aungier_comparison"
 GRID_LEVEL = "very_fine"  # "coarse", "medium", "fine", "very_fine" (the grid.py section 9)
 PROFILE_VARIANT = "emery_base"          # as scripts/run_full_solver.py; "kovach_sandercock" the project default
@@ -51,7 +51,7 @@ from pathlib import Path                                                        
 import numpy as np                                                               # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
 SERIES = ("SS_experiment", "PS_experiment", "SS_potential", "PS_potential")
 
@@ -84,7 +84,7 @@ def read_data(path: Path) -> dict:
 
 
 def solve():
-    from potential_flow_solver import controller as ct
+    from turbolenza.b2b import controller as ct
 
     settings = ct.CaseSettings(**CASE, profile_variant=PROFILE_VARIANT, inlet_mach=INLET_MACH, grid_level=GRID_LEVEL,
                                n_passage=None, n_eta=None)
@@ -103,7 +103,7 @@ def peak(x, m):
 def figure(data: dict, surfaces, run, path: Path) -> None:
     import matplotlib.pyplot as plt
 
-    from potential_flow_solver import plots
+    from turbolenza.b2b import plots
 
     ss, ps = plots.SUCTION_COLOR, plots.PRESSURE_COLOR
     info = run.case.standard_grid.info
@@ -156,7 +156,7 @@ def main(argv=None) -> int:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    from potential_flow_solver import postprocess as pp
+    from turbolenza.b2b import postprocess as pp
 
     data = read_data(ROOT / DATA)
     case, run = solve()

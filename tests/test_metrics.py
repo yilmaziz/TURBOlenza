@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.metrics: build_metrics and GridMetrics, the geometric fields
+Tests for turbolenza.b2b.metrics: build_metrics and GridMetrics, the geometric fields
 of Aungier's transformed equations on a frozen grid (Eqs. 5-1 to 5-3, 5-9).
 
 The references are independent of metrics.py: the grid's own arrays; a region-aware
@@ -33,11 +33,11 @@ import pytest
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import brentq
 
-from potential_flow_solver import geometry
-from potential_flow_solver import grid as gr
-from potential_flow_solver import metrics as mt
-from potential_flow_solver.config import GridSettings
-from potential_flow_solver.geometry import CascadeSpec, make_cascade
+from turbolenza.b2b import geometry
+from turbolenza.b2b import grid as gr
+from turbolenza.b2b import metrics as mt
+from turbolenza.b2b.config import GridSettings
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade
 
 # The EXAMPLE (65-(12A10)10 at 33 deg), a negative-stagger sharp-TE blade, and edge cases of
 # grid.py: a thin nose that folds, a steep nose, a long Kovach tail, a suction-side tail.
@@ -222,9 +222,9 @@ def test_metrics_reads_the_grid_and_nothing_else():
     imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     imported |= {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     outside = {name for name in imported if name.split(".")[0] not in sys.stdlib_module_names}
-    assert outside == {"numpy", "numpy.typing", "potential_flow_solver.grid"}
+    assert outside == {"numpy", "numpy.typing", "turbolenza.b2b.grid"}
     from_grid = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-                 and node.module == "potential_flow_solver.grid" for alias in node.names}
+                 and node.module == "turbolenza.b2b.grid" for alias in node.names}
     assert from_grid == {"Grid"}
     attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}

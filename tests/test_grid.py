@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.grid: make_passage_boundaries (the blade walls of one
+Tests for turbolenza.b2b.grid: make_passage_boundaries (the blade walls of one
 passage and its inlet and exit extensions), make_grid (stations, the blade-passage
 topology from the cuts of the station lines with the blade row, wall values and nodes) and
 rebuild_exit (the exit extension turned to a new discharge angle).
@@ -50,9 +50,9 @@ from scipy.integrate import quad
 from scipy.interpolate import PchipInterpolator
 from scipy.optimize import brentq, minimize_scalar
 
-from potential_flow_solver import grid as gr
-from potential_flow_solver.config import GridSettings
-from potential_flow_solver.geometry import Cascade, CascadeSpec, make_cascade
+from turbolenza.b2b import grid as gr
+from turbolenza.b2b.config import GridSettings
+from turbolenza.b2b.geometry import Cascade, CascadeSpec, make_cascade
 
 # A Dunavant-like cascade, a negative-stagger one with a sharp TE, and the first again with
 # a physical chord. Test inputs only: grid.py knows none of these numbers.
@@ -1804,14 +1804,14 @@ def test_grid_reads_a_ready_cascade_and_nothing_else():
         found |= {node.module for node in nodes if isinstance(node, ast.ImportFrom) and node.module}
         return {name for name in found if name.split(".")[0] not in sys.stdlib_module_names}
 
-    assert imports(tree.body) == {"numpy", "numpy.typing", "scipy.interpolate", "potential_flow_solver.config",
-                                  "potential_flow_solver.geometry"}
+    assert imports(tree.body) == {"numpy", "numpy.typing", "scipy.interpolate", "turbolenza.b2b.config",
+                                  "turbolenza.b2b.geometry"}
     local = imports([node for function in ast.walk(tree) if isinstance(function, ast.FunctionDef)
                      for node in ast.walk(function)])
-    assert local == {"potential_flow_solver.metrics"}
+    assert local == {"turbolenza.b2b.metrics"}
     assert imports(list(ast.walk(tree))) == imports(tree.body) | local
     from_geometry = {alias.name for node in ast.walk(tree)
-                     if isinstance(node, ast.ImportFrom) and node.module == "potential_flow_solver.geometry"
+                     if isinstance(node, ast.ImportFrom) and node.module == "turbolenza.b2b.geometry"
                      for alias in node.names}
     assert from_geometry == {"Cascade"}
     attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}

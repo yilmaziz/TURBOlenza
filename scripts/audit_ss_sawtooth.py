@@ -56,7 +56,7 @@ from pathlib import Path                                                        
 import numpy as np                                                               # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 OUT = ROOT / OUTPUT_DIR
 LINES: list = []
@@ -72,7 +72,7 @@ def say(text: str = "") -> None:
 
 def base_settings(mach: float, level: str):
     import compare_dunavant_aungier as cmp
-    from potential_flow_solver import controller as ct
+    from turbolenza.b2b import controller as ct
 
     return ct.CaseSettings(**cmp.CASE, profile_variant=cmp.PROFILE_VARIANT, inlet_mach=mach, grid_level=level,
                            n_passage=None, n_eta=None)
@@ -100,7 +100,7 @@ def smoothed_cascade(cascade, span: tuple = SMOOTH_RANGE, ramp: float = SMOOTH_R
     (cascade, new curve, max |delta|)."""
     from scipy.interpolate import make_lsq_spline
 
-    from potential_flow_solver.geometry import ParametricBladeCurve
+    from turbolenza.b2b.geometry import ParametricBladeCurve
 
     curves = cascade.active_curves
     c = curves.suction
@@ -177,9 +177,9 @@ class PassZero:
 
 def run_job(job: dict) -> dict:
     warnings.simplefilter("ignore")
-    from potential_flow_solver import controller as ct
-    from potential_flow_solver import postprocess as pp
-    from potential_flow_solver import solver as sv
+    from turbolenza.b2b import controller as ct
+    from turbolenza.b2b import postprocess as pp
+    from turbolenza.b2b import solver as sv
 
     settings = base_settings(job["mach"], job["level"])
     case = ct.build_case(settings)
@@ -192,7 +192,7 @@ def run_job(job: dict) -> dict:
     f, l = g.first_blade_i, g.last_blade_i
     surfaces = pp.blade_surfaces(sol)
     d1, d2 = g.wall_curve_derivative(1)[0], g.wall_curve_derivative(2)[0]
-    from potential_flow_solver.geometry import signed_curvature
+    from turbolenza.b2b.geometry import signed_curvature
 
     rows = np.arange(4)
     nodes = np.asarray(g.nodes)
@@ -569,7 +569,7 @@ def main() -> int:
     with ProcessPoolExecutor(max_workers=N_WORKERS) as pool:
         runs = {r["tag"]: r for r in pool.map(run_job, jobs)}
 
-    from potential_flow_solver import controller as ct
+    from turbolenza.b2b import controller as ct
 
     cascade = ct.build_case(base_settings(0.65, DETAIL_LEVEL)).cascade
     smooth_cascade, smooth_curve, offset = smoothed_cascade(cascade)

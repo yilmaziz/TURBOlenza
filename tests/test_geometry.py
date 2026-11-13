@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.geometry.
+Tests for turbolenza.b2b.geometry.
 
 Every test builds blades over a range of parameters and checks them against something the
 module does not compute itself: a rotation matrix, Aungier's Eqs. 4-6, 4-30 and 4-31 written
@@ -43,7 +43,7 @@ import numpy as np
 import pytest
 from scipy.optimize import minimize_scalar
 
-from potential_flow_solver import geometry as g
+from turbolenza.b2b import geometry as g
 
 DEFAULT_SPEC = g.CascadeSpec(blade_type="NACA65", solidity=1.25, stagger_deg=25.0, cl0=0.8, t_max_over_c=0.08)
 NOMINAL_PEAK = 0.9992       # Table 4-1: the "10 %" 65-010 column peaks at 9.992 % (x/c 0.40)
@@ -106,12 +106,12 @@ def test_geometry_imports_only_the_standard_library_numpy_and_scipy():
 def test_geometry_runs_with_the_other_project_packages_blocked():
     """A fresh interpreter in which naca65 and b2b cannot be imported still builds a cascade."""
     code = ("import sys; sys.modules.update(naca65=None, b2b=None); "
-            "from potential_flow_solver.geometry import CascadeSpec, make_cascade; "
+            "from turbolenza.b2b.geometry import CascadeSpec, make_cascade; "
             "spec = CascadeSpec(blade_type='NACA65', solidity=1.1, stagger_deg=20.0, cl0=0.6, t_max_over_c=0.06); "
             "c = make_cascade(spec); "
             "assert 0.0 < c.throat_over_pitch < 1.0")
-    repo_root = Path(g.__file__).resolve().parents[1]
-    subprocess.run([sys.executable, "-c", code], cwd=repo_root, check=True)
+    src_root = Path(g.__file__).resolve().parents[2]        # src/: turbolenza importable from the cwd
+    subprocess.run([sys.executable, "-c", code], cwd=src_root, check=True)
 
 
 # --- CascadeSpec: the one input object -----------------------------------------------------
@@ -1201,8 +1201,8 @@ def test_grid_accepts_c1_and_c2_alike(variant):
     zones they differ by that PCHIP's own error as well: below 1.0e-5 c (measured 9.6e-6 c
     for both variants; grid.py measures 8.3e-6 c for that PCHIP against the blade at 16
     times the camber stations, and the C2 fit adds at most 1e-6 c)."""
-    from potential_flow_solver import grid
-    from potential_flow_solver.config import GridSettings
+    from turbolenza.b2b import grid
+    from turbolenza.b2b.config import GridSettings
     settings = GridSettings(n_passage=61, n_eta=11, upstream_extension_chords=1.0, downstream_extension_chords=1.0)
     c1, c2 = c2_pair(profile_variant=variant, cl0=1.2, t_max_over_c=0.10, solidity=1.0, stagger_deg=33.0)
     sampled = replace(c2, active_curves=None, normalized_curves=None)

@@ -120,9 +120,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from potential_flow_solver.flow import FlowField
-from potential_flow_solver.grid import Grid
-from potential_flow_solver.metrics import GridMetrics
+from turbolenza.b2b.flow import FlowField
+from turbolenza.b2b.grid import Grid
+from turbolenza.b2b.metrics import GridMetrics
 
 
 class KuttaError(ValueError):

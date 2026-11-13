@@ -3,7 +3,7 @@ diagnose_mach060_vs_065.py
 ==========================
 Diagnosis of one question: why does the NACA 65-(12A10)10 case converge cleanly at M1 = 0.60
 and reach a sonic interior node and diverge at M1 = 0.65? Controlled experiments on ONE frozen
-baseline (below), every case built by potential_flow_solver.controller and solved by the
+baseline (below), every case built by turbolenza.b2b.controller and solved by the
 production solver. Nothing here tunes the solver or reproduces a published number.
 
     python scripts/diagnose_mach060_vs_065.py
@@ -37,7 +37,7 @@ What each group answers
                             grids and at higher inlet Mach numbers (where the wall itself
                             approaches M = 1).
 
-SINCE THE 2026-11-13 FIX of potential_flow_solver/flow.py (psi_m by m region, metrics.py's
+SINCE THE 2026-11-13 FIX of src/turbolenza/b2b/flow.py (psi_m by m region, metrics.py's
 regions: the same one-sided stencils at f - 1, f, l, l + 1) the variants V and Vle ARE
 production: patched on top of it they change nothing (tests/test_diagnose_script.py), and the
 acceptance runs of scripts/verify_le_velocity_fix.py reproduce the saved W_V_* runs bit for bit.
@@ -125,7 +125,7 @@ from pathlib import Path                                                        
 import numpy as np                                                               # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 OUT = ROOT / OUTPUT_DIR
 
 TRACE_NAMES = ("mach", "W", "W_m", "W_theta", "a", "T", "p", "rho_res", "rho_tgt", "rho_next", "psi", "psi_m",
@@ -150,7 +150,7 @@ def spec(tag, mach, label="", **options) -> dict:
 
 
 def settings_of(job: dict):
-    from potential_flow_solver import controller as ct
+    from turbolenza.b2b import controller as ct
 
     values = dict(BASELINE)
     values.update(case_name=job["tag"], inlet_mach=job["mach"], solver_mode=job["mode"], stop_at_sonic=bool(job["stop"]),
@@ -227,7 +227,7 @@ def apply_what_if(kind, first: int, last: int) -> None:
     "Cle" the same at the leading-edge pair f - 1, f only. Returns the function that puts the
     production functions back: run_job calls it when the case is done, because a pooled worker
     process goes on to other cases."""
-    from potential_flow_solver import coefficients, flow
+    from turbolenza.b2b import coefficients, flow
 
     production = (flow._derivatives, coefficients._d_dm)
 
@@ -270,10 +270,10 @@ def apply_what_if(kind, first: int, last: int) -> None:
 
 def check_production() -> None:
     """Refuse to run a case if a diagnostic variant is still patched into this process."""
-    from potential_flow_solver import coefficients, flow
+    from turbolenza.b2b import coefficients, flow
 
-    for function, module, name in ((flow._derivatives, "potential_flow_solver.flow", "_derivatives"),
-                                   (coefficients._d_dm, "potential_flow_solver.coefficients", "_d_dm")):
+    for function, module, name in ((flow._derivatives, "turbolenza.b2b.flow", "_derivatives"),
+                                   (coefficients._d_dm, "turbolenza.b2b.coefficients", "_d_dm")):
         if function.__module__ != module or function.__name__ != name:
             raise RuntimeError(f"{module}.{name} is not the production function in this process: a what-if patch leaked")
 
@@ -281,9 +281,9 @@ def check_production() -> None:
 def run_job(job: dict) -> dict:
     """Build and solve one case in this process; save its fields (and trace); return its row."""
     warnings.simplefilter("ignore")
-    from potential_flow_solver import controller as ct
-    from potential_flow_solver import postprocess as pp
-    from potential_flow_solver import solver as sv
+    from turbolenza.b2b import controller as ct
+    from turbolenza.b2b import postprocess as pp
+    from turbolenza.b2b import solver as sv
 
     check_production()
     row = dict(tag=job["tag"], label=job["label"], mach=job["mach"], mode=job["mode"], what_if=job["what_if"] or "",
@@ -455,8 +455,8 @@ SUMMARY_COLUMNS = [("label", "case"), ("status", "status"), ("passes", "passes")
 def study_inputs() -> None:
     """Sections 2, 3 and 20 of the brief: the configuration of both cases, the start density
     against the inlet static density, the mass flow by hand."""
-    from potential_flow_solver import controller as ct
-    from potential_flow_solver import eos
+    from turbolenza.b2b import controller as ct
+    from turbolenza.b2b import eos
 
     say("=" * 100)
     say("MATCHED CONFIGURATION: the two cases differ in the inlet Mach number only")
@@ -491,7 +491,7 @@ def study_inputs() -> None:
 def analyse_traces(critical=None) -> tuple:
     """Critical-node history, first-blade-station profiles, the transition audit and the first
     wall nodes from the two baseline traces. Returns (critical node, selected passes)."""
-    from potential_flow_solver import eos
+    from turbolenza.b2b import eos
 
     gas = eos.CaloricallyPerfectGas(gamma=BASELINE["gamma"], gas_constant=BASELINE["gas_constant"])
     reference = eos.blade_row_reference(eos.TotalState(BASELINE["inlet_total_pressure"],
@@ -737,7 +737,7 @@ def compare_what_if() -> None:
 
 def geometry_audit() -> None:
     """Section 19: what the generated profile is, from the cascade and its metadata."""
-    from potential_flow_solver import controller as ct
+    from turbolenza.b2b import controller as ct
 
     case = ct.build_case(settings_of(spec("geometry", MACH_HIGH)))
     c, a = case.cascade, case.cascade.active

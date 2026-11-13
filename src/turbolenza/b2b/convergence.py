@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
-from potential_flow_solver.config import IterationSettings
+from turbolenza.b2b.config import IterationSettings
 
 
 @dataclass

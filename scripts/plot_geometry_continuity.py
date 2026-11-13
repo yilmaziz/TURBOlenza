@@ -40,10 +40,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from potential_flow_solver import geometry  # noqa: E402
-from potential_flow_solver.geometry import Cascade, CascadeSpec  # noqa: E402
+from turbolenza.b2b import geometry  # noqa: E402
+from turbolenza.b2b.geometry import Cascade, CascadeSpec  # noqa: E402
 
 # --- Development inputs: edit these ---------------------------------------------------
 EXAMPLE = CascadeSpec(             # the Dunavant-like NACA 65-(12A10)10 of plot_cascade.py

@@ -45,7 +45,7 @@ from scipy.integrate import IntegrationWarning, quad
 warnings.filterwarnings("ignore", category=IntegrationWarning)
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT, Path(__file__).resolve().parent):
+for path in (ROOT / "src", Path(__file__).resolve().parent):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -54,10 +54,10 @@ import matplotlib.pyplot as plt  # noqa: E402
 import audit_redist_numerics as ar  # noqa: E402
 import audit_wall_station_topology as wt  # noqa: E402
 import link_geometry as lg  # noqa: E402
-from potential_flow_solver import grid as gr  # noqa: E402
-from potential_flow_solver.coefficients import build_coefficients  # noqa: E402
-from potential_flow_solver.config import GridSettings  # noqa: E402
-from potential_flow_solver.metrics import build_metrics  # noqa: E402
+from turbolenza.b2b import grid as gr  # noqa: E402
+from turbolenza.b2b.coefficients import build_coefficients  # noqa: E402
+from turbolenza.b2b.config import GridSettings  # noqa: E402
+from turbolenza.b2b.metrics import build_metrics  # noqa: E402
 
 STAGGERS = (13.0, 23.0, 33.0, 43.0, 53.0)
 SEQUENCES = {13.0: (60, 102, 173, 294), 23.0: (43, 66, 101, 159), 33.0: (29, 43, 65, 97),

@@ -1,4 +1,7 @@
-# potential_flow_solver
+# turbolenza.b2b
+
+> Part of **TURBOlenza** (see the repository README). Until 2026-11-13 this package was the
+> stand-alone `potential_flow_solver`; the move to `src/turbolenza/b2b/` changed import paths only.
 
 Blade-to-blade compressible potential flow after R. H. Aungier, *Axial-Flow Compressors*
 (ASME Press, 2003), Chapter 5. The method solves a stream-function equation on a sheared
@@ -79,14 +82,14 @@ values, smoothly shaded over the whole domain and the blade passage); and writes
 built, 2 solve stopped. The default is the NACA 65-(12A10)10 case of Fig. 5-6 at M₁ = 0.65, which converges
 subsonically since the 2026-11-13 ψ_m fix (decision log). `python scripts/compare_dunavant_aungier.py` solves the same case on the medium standard grid
 and plots its surface Mach number against Dunavant's measured points and Aungier's potential-flow curve
-(digitized, `potential_flow_solver/Dunavant_Aungier_Fix.csv`: x/c and Mach; results in
+(digitized, `validation/naca65_12a10_10/Dunavant_Aungier_Fix.csv`: x/c and Mach; results in
 `outputs/dunavant_aungier_comparison/`). The script only fills `controller.CaseSettings` and calls `controller.build_case`,
 `run_case`, `format_run_report`, `plot_run`, `export_run`: a later GUI calls the same functions.
 
 ## Package tree
 
 ```text
-potential_flow_solver/
+src/turbolenza/b2b/
 ├── __init__.py
 ├── config.py                inputs and numerical settings
 ├── geometry.py              NACA 65 blade, stagger, pitch, throat; C1 or C2 surfaces, robust C2 LE (reopened)
@@ -299,8 +302,8 @@ Choices that are ours, not the book's, or where the spec and the data disagreed.
 
 - **`geometry.py` is self-contained.** It imports only the standard library, NumPy and
   SciPy; the Table 4-1 data and every construction step are in the file. Two tests keep it
-  that way: one reads its imports, the other builds a cascade with `naca65` and `b2b`
-  blocked. The NACA 65 construction is the method of the repo's earlier naca65 toolchain,
+  that way: one reads its imports, the other builds a cascade with newblade's `naca65` and `b2b`
+  packages blocked. The NACA 65 construction is the method of the repo's earlier naca65 toolchain,
   rewritten into this file. One-off checks outside the repository: at nominal thickness it
   reproduces naca65's frozen T10 reference contour to 7e-18 (o/s, angles and area
   identical) and naca65's generator on 40 blades to 3.5e-18. Nothing imports naca65.

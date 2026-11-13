@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.eos: the calorically perfect gas, the energy relation
+Tests for turbolenza.b2b.eos: the calorically perfect gas, the energy relation
 h = I + (r omega)^2 / 2 - W^2 / 2, the static state at the relative speed, Aungier's initial
 density and the relaxed density update; against closed-form relations computed here, not
 the module itself.
@@ -43,7 +43,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from potential_flow_solver import eos
+from turbolenza.b2b import eos
 
 AIR = eos.CaloricallyPerfectGas(gamma=1.4, gas_constant=287.05)
 GASES = [AIR, eos.CaloricallyPerfectGas(gamma=5.0 / 3.0, gas_constant=2077.1),

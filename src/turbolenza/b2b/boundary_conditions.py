@@ -121,7 +121,7 @@ from numbers import Real
 import numpy as np
 from numpy.typing import NDArray
 
-from potential_flow_solver.grid import EXIT, INLET, PASSAGE, Grid
+from turbolenza.b2b.grid import EXIT, INLET, PASSAGE, Grid
 
 Node = tuple[int, int]
 Mask = NDArray[np.bool_]

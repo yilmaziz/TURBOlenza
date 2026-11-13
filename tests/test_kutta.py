@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.kutta: the trailing-edge Kutta residual (Aungier 2003 Eq.
+Tests for turbolenza.b2b.kutta: the trailing-edge Kutta residual (Aungier 2003 Eq.
 5-34) and the exit-angle correction (Aungier 2000 Eqs. 13-57, 13-59 mapped onto this
 project's tan(beta) convention), checked without the coupled solver.
 
@@ -50,17 +50,17 @@ from unittest import mock
 import numpy as np
 import pytest
 
-from potential_flow_solver import config as cf
-from potential_flow_solver import eos, kutta
-from potential_flow_solver import solver as sv
-from potential_flow_solver.boundary_conditions import build_boundary_conditions
-from potential_flow_solver.coefficients import build_coefficients
-from potential_flow_solver.flow import velocity_components
-from potential_flow_solver.geometry import CascadeSpec, make_cascade
-from potential_flow_solver.grid import EXIT, PASSAGE, Grid, WallIdentity, WallSide, make_grid, rebuild_exit
-from potential_flow_solver.linear_solver import solve_linear_system
-from potential_flow_solver.matrix_assembly import assemble_from_coefficients
-from potential_flow_solver.metrics import build_metrics
+from turbolenza.b2b import config as cf
+from turbolenza.b2b import eos, kutta
+from turbolenza.b2b import solver as sv
+from turbolenza.b2b.boundary_conditions import build_boundary_conditions
+from turbolenza.b2b.coefficients import build_coefficients
+from turbolenza.b2b.flow import velocity_components
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade
+from turbolenza.b2b.grid import EXIT, PASSAGE, Grid, WallIdentity, WallSide, make_grid, rebuild_exit
+from turbolenza.b2b.linear_solver import solve_linear_system
+from turbolenza.b2b.matrix_assembly import assemble_from_coefficients
+from turbolenza.b2b.metrics import build_metrics
 
 AIR = eos.CaloricallyPerfectGas(gamma=1.4, gas_constant=287.05)
 PT, TT = 101325.0, 288.15
@@ -382,8 +382,8 @@ def test_kutta_module_solves_relaxes_and_assembles_nothing():
     tree = ast.parse(Path(kutta.__file__).read_text(encoding="utf-8"))
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
-    assert imported <= {"__future__", "math", "dataclasses", "numpy", "potential_flow_solver.flow",
-                        "potential_flow_solver.grid", "potential_flow_solver.metrics"}
+    assert imported <= {"__future__", "math", "dataclasses", "numpy", "turbolenza.b2b.flow",
+                        "turbolenza.b2b.grid", "turbolenza.b2b.metrics"}
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     names |= {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     assert not {"eos", "density", "relax_density", "build_coefficients", "assemble_from_coefficients",

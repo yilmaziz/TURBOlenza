@@ -33,9 +33,9 @@ from functools import lru_cache
 import numpy as np
 import pytest
 
-from potential_flow_solver import grid as gr
-from potential_flow_solver.config import GridSettings
-from potential_flow_solver.geometry import CascadeSpec, make_cascade
+from turbolenza.b2b import grid as gr
+from turbolenza.b2b.config import GridSettings
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade
 
 INLET = math.radians(45.0)
 SAMPLES = 40001
@@ -179,9 +179,9 @@ def test_reproducible_and_one_level_equals_the_family_member():
 
 
 def test_make_grid_level_mode_and_the_solver_take_the_same_grid():
-    from potential_flow_solver import config as cf
-    from potential_flow_solver import eos
-    from potential_flow_solver import solver as sv
+    from turbolenza.b2b import config as cf
+    from turbolenza.b2b import eos
+    from turbolenza.b2b import solver as sv
 
     settings = GridSettings(level="fine")
     grid = gr.make_grid(cascade(), settings, INLET, math.radians(20.0), require_ss_ps=True)

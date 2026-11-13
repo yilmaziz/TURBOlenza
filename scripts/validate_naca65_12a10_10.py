@@ -2,7 +2,7 @@
 validate_naca65_12a10_10.py
 ===========================
 Validation runner for the NACA 65-(12A10)10 cascade of Dunavant et al. (1955), the case of
-Aungier (2003) Fig. 5-6: the density + Kutta coupled solver (potential_flow_solver.solver.solve)
+Aungier (2003) Fig. 5-6: the density + Kutta coupled solver (turbolenza.b2b.solver.solve)
 at the documented test condition, the blade-surface Mach number and pressure coefficient
 against x/c, the discharge angle and the convergence summary.
 
@@ -57,12 +57,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
-from potential_flow_solver import config as cf                                  # noqa: E402
-from potential_flow_solver import eos, postprocess                              # noqa: E402
-from potential_flow_solver import solver as sv                                  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade            # noqa: E402
+from turbolenza.b2b import config as cf                                  # noqa: E402
+from turbolenza.b2b import eos, postprocess                              # noqa: E402
+from turbolenza.b2b import solver as sv                                  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade            # noqa: E402
 
 CASE = {
     "blade": ("NACA 65-(12A10)10 (cl0 1.2, t/c 0.10, A10 mean line)",
@@ -126,8 +126,8 @@ def main(argv=None) -> int:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    from potential_flow_solver import plots
-    from potential_flow_solver.monitor import LiveConvergenceMonitor
+    from turbolenza.b2b import plots
+    from turbolenza.b2b.monitor import LiveConvergenceMonitor
 
     cascade, config = build(args)
     print("NACA 65-(12A10)10 cascade, Dunavant et al. (1955) / Aungier (2003) Fig. 5-6")

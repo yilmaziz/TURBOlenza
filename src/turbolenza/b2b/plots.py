@@ -35,8 +35,8 @@ from __future__ import annotations
 
 import math
 
-from potential_flow_solver import postprocess
-from potential_flow_solver.monitor import LiveConvergenceMonitor, SolveInfo
+from turbolenza.b2b import postprocess
+from turbolenza.b2b.monitor import LiveConvergenceMonitor, SolveInfo
 
 SUCTION_COLOR, PRESSURE_COLOR = "#1f77b4", "#d62728"
 SUCTION_LABEL, PRESSURE_LABEL = "Suction side", "Pressure side"
@@ -82,7 +82,7 @@ def plot_convergence(solution, settings=None, *, title: str | None = None):
     """The convergence history of solution.passes, as the live monitor draws it; tolerance
     lines from settings (config.IterationSettings) when given. Returns (fig, axes), axes the
     monitor's dict of axes."""
-    from potential_flow_solver import convergence
+    from turbolenza.b2b import convergence
 
     coupled = solution.kutta_relaxation is not None
     first = solution.passes[0]

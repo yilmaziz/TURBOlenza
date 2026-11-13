@@ -1,6 +1,6 @@
 """
-Tests for potential_flow_solver.postprocess (surface quantities, discharge angle, summary,
-measured-data import) and potential_flow_solver.plots (the figures), on the dimensional
+Tests for turbolenza.b2b.postprocess (surface quantities, discharge angle, summary,
+measured-data import) and turbolenza.b2b.plots (the figures), on the dimensional
 stationary verification case of test_solver.py (33 deg, n_passage 43, n_eta 21, chord 0.1 m,
 inlet 45 deg at M 0.3, the mass flow derived from the inlet Mach number).
 
@@ -38,12 +38,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
-from potential_flow_solver import config as cf  # noqa: E402
-from potential_flow_solver import eos, plots  # noqa: E402
-from potential_flow_solver import postprocess as pp  # noqa: E402
-from potential_flow_solver import solver as sv  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade  # noqa: E402
-from potential_flow_solver.grid import Grid, WallIdentity, WallSide  # noqa: E402
+from turbolenza.b2b import config as cf  # noqa: E402
+from turbolenza.b2b import eos, plots  # noqa: E402
+from turbolenza.b2b import postprocess as pp  # noqa: E402
+from turbolenza.b2b import solver as sv  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade  # noqa: E402
+from turbolenza.b2b.grid import Grid, WallIdentity, WallSide  # noqa: E402
 
 AIR = eos.CaloricallyPerfectGas(gamma=1.4, gas_constant=287.05)
 C_REF = 0.1

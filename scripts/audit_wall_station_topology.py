@@ -48,15 +48,15 @@ import numpy as np
 from scipy.optimize import brentq
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import ListedColormap  # noqa: E402
 
-from potential_flow_solver import grid as gr  # noqa: E402
-from potential_flow_solver.config import GridSettings  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade, rotate_by_stagger  # noqa: E402
+from turbolenza.b2b import grid as gr  # noqa: E402
+from turbolenza.b2b.config import GridSettings  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade, rotate_by_stagger  # noqa: E402
 
 STAGGERS = (13.0, 23.0, 33.0, 43.0, 53.0)
 N_LIST = (31, 41, 51, 61, 81, 101, 151, 201, 301, 401)

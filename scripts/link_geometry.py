@@ -170,12 +170,12 @@ def row_links(g, stencil_rows: dict, i: int, J: int, blade: Blade, mixed_table: 
 
 def build_case(cascade, n_passage: int, n_eta: int, inlet: float = math.radians(45.0)):
     """Grid, metrics, coefficients (rho = 1, mdot' = 1) and periodic rows of one resolution."""
-    from potential_flow_solver.boundary_conditions import build_boundary_conditions
-    from potential_flow_solver.coefficients import build_coefficients
-    from potential_flow_solver.config import GridSettings
-    from potential_flow_solver.discretization import build_periodic_pde_rows
-    from potential_flow_solver.grid import make_grid
-    from potential_flow_solver.metrics import build_metrics
+    from turbolenza.b2b.boundary_conditions import build_boundary_conditions
+    from turbolenza.b2b.coefficients import build_coefficients
+    from turbolenza.b2b.config import GridSettings
+    from turbolenza.b2b.discretization import build_periodic_pde_rows
+    from turbolenza.b2b.grid import make_grid
+    from turbolenza.b2b.metrics import build_metrics
 
     g = make_grid(cascade, GridSettings(n_passage=n_passage, n_eta=n_eta), inlet)
     metrics = build_metrics(g)
@@ -189,7 +189,7 @@ def sweep(cascade, blade: Blade, levels):
     f - 4 .. f + 3 (LE), and the old central TE link (l + 1, J) -> (l, J). Returns a list of
     dicts: n_passage, n_eta, f, l, chords checked, the straight-chord blade intersections and
     the old central TE chord's crossing."""
-    from potential_flow_solver.discretization import MIXED_M_DIFFERENCE
+    from turbolenza.b2b.discretization import MIXED_M_DIFFERENCE
 
     results = []
     for n_passage, n_eta in levels:

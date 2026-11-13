@@ -32,7 +32,7 @@ import numpy as np
 import pytest
 from scipy.interpolate import PPoly
 
-from potential_flow_solver import geometry as g
+from turbolenza.b2b import geometry as g
 
 ROOT = Path(__file__).resolve().parents[1]
 

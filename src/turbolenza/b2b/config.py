@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from potential_flow_solver.eos import DENSITY_RELAXATION, PerfectGas
+from turbolenza.b2b.eos import DENSITY_RELAXATION, PerfectGas
 
 
 @dataclass(frozen=True)

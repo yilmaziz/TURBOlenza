@@ -182,7 +182,7 @@ from dataclasses import dataclass, fields
 import numpy as np
 from numpy.typing import NDArray
 
-from potential_flow_solver.grid import Grid
+from turbolenza.b2b.grid import Grid
 
 EPSILON = float(np.finfo(float).eps)
 ROUND_OFF = 64.0 * EPSILON          # relative tolerance of the contract checks: times the m scale (largest of |m_in|,

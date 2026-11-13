@@ -59,17 +59,17 @@ from scipy.optimize import brentq  # noqa: E402
 from scipy.spatial import cKDTree  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT, ROOT / "scripts"):
+for path in (ROOT / "src", ROOT / "scripts"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
 import plot_cascade as workflow  # noqa: E402  (EXAMPLE, SETTINGS and the angles of the current workflow)
-from potential_flow_solver import discretization as dz  # noqa: E402
-from potential_flow_solver import geometry  # noqa: E402
-from potential_flow_solver import grid as grid_module  # noqa: E402
-from potential_flow_solver.boundary_conditions import build_boundary_conditions  # noqa: E402
-from potential_flow_solver.coefficients import build_coefficients  # noqa: E402
-from potential_flow_solver.metrics import build_metrics  # noqa: E402
+from turbolenza.b2b import discretization as dz  # noqa: E402
+from turbolenza.b2b import geometry  # noqa: E402
+from turbolenza.b2b import grid as grid_module  # noqa: E402
+from turbolenza.b2b.boundary_conditions import build_boundary_conditions  # noqa: E402
+from turbolenza.b2b.coefficients import build_coefficients  # noqa: E402
+from turbolenza.b2b.metrics import build_metrics  # noqa: E402
 
 # --- Inputs ------------------------------------------------------------------------------
 CASES = (101, 41)               # n_passage values; 101 is the main case, 41 the comparison

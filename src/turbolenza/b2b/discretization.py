@@ -217,10 +217,10 @@ import numpy as np
 import scipy.sparse as sp
 from numpy.typing import NDArray
 
-from potential_flow_solver.boundary_conditions import BoundaryConditions
-from potential_flow_solver.coefficients import CoefficientFields, Coefficients
-from potential_flow_solver.grid import Grid
-from potential_flow_solver.metrics import ROUND_OFF, GridMetrics
+from turbolenza.b2b.boundary_conditions import BoundaryConditions
+from turbolenza.b2b.coefficients import CoefficientFields, Coefficients
+from turbolenza.b2b.grid import Grid
+from turbolenza.b2b.metrics import ROUND_OFF, GridMetrics
 
 Field = NDArray[np.float64]
 Node = tuple[int, int]

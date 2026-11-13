@@ -65,7 +65,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
-from potential_flow_solver.solver import Solution
+from turbolenza.b2b.solver import Solution
 
 DUNAVANT = "dunavant"           # S = (Pt1 - p) / q1
 INLET_STATIC = "inlet_static"   # Cp = (p - p1) / q1

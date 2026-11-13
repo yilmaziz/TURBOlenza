@@ -1,5 +1,5 @@
 """
-Tests for potential_flow_solver.matrix_assembly: the local equations of discretization.py and
+Tests for turbolenza.b2b.matrix_assembly: the local equations of discretization.py and
 boundary_conditions.py gathered into F Psi = Q, with Aungier's far-boundary elimination.
 
 What is checked
@@ -40,15 +40,15 @@ import pytest
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from potential_flow_solver import boundary_conditions as bc
-from potential_flow_solver import discretization as dz
-from potential_flow_solver import grid as gr
-from potential_flow_solver import matrix_assembly as ma
-from potential_flow_solver.boundary_conditions import Elimination, Relation, Term, build_boundary_conditions
-from potential_flow_solver.coefficients import build_coefficients
-from potential_flow_solver.config import GridSettings
-from potential_flow_solver.geometry import CascadeSpec, make_cascade
-from potential_flow_solver.metrics import build_metrics
+from turbolenza.b2b import boundary_conditions as bc
+from turbolenza.b2b import discretization as dz
+from turbolenza.b2b import grid as gr
+from turbolenza.b2b import matrix_assembly as ma
+from turbolenza.b2b.boundary_conditions import Elimination, Relation, Term, build_boundary_conditions
+from turbolenza.b2b.coefficients import build_coefficients
+from turbolenza.b2b.config import GridSettings
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade
+from turbolenza.b2b.metrics import build_metrics
 
 INLET = math.radians(45.0)
 TWO_PI = 2.0 * math.pi
@@ -566,6 +566,6 @@ def test_module_holds_no_difference_physics_and_no_solve():
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     outside = {name for name in imported if name.split(".")[0] not in sys.stdlib_module_names}
-    assert outside == {"numpy", "numpy.typing", "scipy.sparse", "potential_flow_solver.boundary_conditions",
-                       "potential_flow_solver.coefficients", "potential_flow_solver.discretization",
-                       "potential_flow_solver.metrics"}
+    assert outside == {"numpy", "numpy.typing", "scipy.sparse", "turbolenza.b2b.boundary_conditions",
+                       "turbolenza.b2b.coefficients", "turbolenza.b2b.discretization",
+                       "turbolenza.b2b.metrics"}

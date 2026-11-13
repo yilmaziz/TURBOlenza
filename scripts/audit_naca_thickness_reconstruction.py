@@ -8,7 +8,7 @@ since been the production C2 reconstruction (geometry.py, CascadeSpec.thickness_
 "quintic_natural_sqrt"), A_pchip the selectable legacy one ("pchip_sqrt", the C1 default).
 "production" in the report and the figures means the geometry the audit was run against,
 the legacy PCHIP. A_pchip and C_quintic_natural are built through CascadeSpec; a diagnostic
-candidate (B, D) is registered in potential_flow_solver.geometry only inside
+candidate (B, D) is registered in turbolenza.b2b.geometry only inside
 thickness_reconstruction() (under its own name, beside the production ones; caches cleared
 on entry and exit) and taken out again; nothing else of the construction changes: the same
 table, camber line, station reading (arc length along the camber line), LE nose and fair,
@@ -76,7 +76,7 @@ import numpy as np                                                              
 from scipy.interpolate import BSpline, CubicSpline, PPoly, make_smoothing_spline   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 OUT = ROOT / OUTPUT_DIR
 LINES: list = []
@@ -98,7 +98,7 @@ def say(text: str = "") -> None:
 def table():
     """(stations, corrected thickness t/c, z = sqrt(station), half-thickness) of Table 4-1 as
     geometry.py stores and corrects it (65-010, t/c 0.10)."""
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     x = np.array(g._TABLE_X_PCT) / 100.0
     t = g._corrected_thickness()
@@ -122,7 +122,7 @@ def smoothing_penalty(z, h, tolerance_half: float) -> float:
 def candidate(name: str):
     """The half-thickness h(z) of candidate name as a PPoly (the production interpolant itself
     for A_pchip and C_quintic_natural)."""
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     _, _, z, h = table()
     if name in PRODUCTION_NAMES:
@@ -139,7 +139,7 @@ def candidate(name: str):
 
 
 def _clear_geometry_caches() -> None:
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     for name in dir(g):
         item = getattr(g, name)
@@ -149,7 +149,7 @@ def _clear_geometry_caches() -> None:
 
 def production_state() -> tuple:
     """The geometry.py objects a diagnostic registration replaces (and must restore)."""
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     return g._HALF_THICKNESS, g.THICKNESS_RECONSTRUCTIONS, g._RECONSTRUCTION_MAXIMUM
 
@@ -161,7 +161,7 @@ def thickness_reconstruction(name: str):
     the others: the candidate is registered in geometry.py under "audit_<name>" beside the
     production ones (the slopes come from geometry's own polynomial path, any PPoly) inside
     the block; on exit the production state is back and the caches cleared."""
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     if name in PRODUCTION_NAMES:
         yield PRODUCTION_NAMES[name]
@@ -181,7 +181,7 @@ def thickness_reconstruction(name: str):
 
 
 def build_cascade(name: str, variant: str):
-    from potential_flow_solver.geometry import CascadeSpec, make_cascade
+    from turbolenza.b2b.geometry import CascadeSpec, make_cascade
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -221,7 +221,7 @@ def thickness_checks(name: str, reconstruction) -> dict:
             wrong += int(np.count_nonzero(t1[on] < 0.0))
         elif tb < ta:
             wrong += int(np.count_nonzero(t1[on] > 0.0))
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     le_slope = float(reconstruction(0.0, 1))
     le_slope_nose = math.sqrt(2.0 * g.TABLE_LE_RADIUS)              # h = sqrt(2 R_LE s) = sqrt(2 R_LE) z, parabolic nose
@@ -318,7 +318,7 @@ def table_station_x_c(variant: str):
     construction; the candidates are exact at the stations, D within 2.5e-6 c)."""
     from scipy.optimize import brentq
 
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     stations = np.array(g._TABLE_X_PCT[1:-1]) / 100.0
     stations = stations[stations >= g.FIRST_TABLE_STATION]
@@ -382,8 +382,8 @@ def solve_job(job: dict) -> dict:
     registration taken out before the solve)."""
     warnings.simplefilter("ignore")
     import audit_ss_sawtooth as saw
-    from potential_flow_solver import controller as ct
-    from potential_flow_solver import solver as sv
+    from turbolenza.b2b import controller as ct
+    from turbolenza.b2b import solver as sv
 
     settings = saw.base_settings(0.65, job["level"])
     case = ct.build_case(settings)
@@ -391,7 +391,7 @@ def solve_job(job: dict) -> dict:
     sol = sv.solve(cascade, case.config, c_ref=settings.chord)
     g = sol.grid
     f, l = g.first_blade_i, g.last_blade_i
-    from potential_flow_solver import postprocess as pp
+    from turbolenza.b2b import postprocess as pp
 
     s = pp.blade_surfaces(sol)
     mach = np.asarray(sol.mach)
@@ -618,7 +618,7 @@ def main(argv=None) -> int:
 
     matplotlib.use("Agg")
     warnings.simplefilter("ignore")
-    from potential_flow_solver import geometry as g
+    from turbolenza.b2b import geometry as g
 
     OUT.mkdir(parents=True, exist_ok=True)
     production_objects = production_state()

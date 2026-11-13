@@ -180,7 +180,7 @@ from numbers import Real
 import numpy as np
 from numpy.typing import NDArray
 
-from potential_flow_solver.metrics import ROUND_OFF, GridMetrics
+from turbolenza.b2b.metrics import ROUND_OFF, GridMetrics
 
 Field = NDArray[np.float64]
 

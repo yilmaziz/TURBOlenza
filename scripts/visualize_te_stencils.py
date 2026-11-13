@@ -41,7 +41,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT, Path(__file__).resolve().parent):
+for path in (ROOT / "src", Path(__file__).resolve().parent):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -49,8 +49,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyArrowPatch  # noqa: E402
 
 import link_geometry as lg  # noqa: E402
-from potential_flow_solver import discretization as dz  # noqa: E402
-from potential_flow_solver.geometry import CascadeSpec, make_cascade  # noqa: E402
+from turbolenza.b2b import discretization as dz  # noqa: E402
+from turbolenza.b2b.geometry import CascadeSpec, make_cascade  # noqa: E402
 
 SPEC = CascadeSpec(blade_type="NACA65", solidity=1.0, stagger_deg=33.0, cl0=1.2, t_max_over_c=0.10,
                    surface_continuity="C2")

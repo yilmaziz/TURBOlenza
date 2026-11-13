@@ -78,19 +78,19 @@ from pathlib import Path
 
 import numpy as np
 
-from potential_flow_solver import config as cf
-from potential_flow_solver import eos, postprocess
-from potential_flow_solver import solver as sv
-from potential_flow_solver.flow import InletState, InletStateError, inlet_state
-from potential_flow_solver.geometry import Cascade, CascadeSpec, make_cascade
-from potential_flow_solver.grid import Grid, GridError, StandardGrid, build_grid, make_grid
+from turbolenza.b2b import config as cf
+from turbolenza.b2b import eos, postprocess
+from turbolenza.b2b import solver as sv
+from turbolenza.b2b.flow import InletState, InletStateError, inlet_state
+from turbolenza.b2b.geometry import Cascade, CascadeSpec, make_cascade
+from turbolenza.b2b.grid import Grid, GridError, StandardGrid, build_grid, make_grid
 
 COUPLED, FIXED_EXIT = "coupled_kutta", "fixed_exit"
 SOLVER_MODES = (COUPLED, FIXED_EXIT)
 BLADE_TE_ANGLE, MANUAL = "blade_te_angle", "manual"
 EXIT_ANGLE_MODES = (BLADE_TE_ANGLE, MANUAL)
 THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")
-SUMMARY_FORMAT = "potential_flow_solver run summary, version 1"
+SUMMARY_FORMAT = "turbolenza.b2b run summary, version 1"
 
 
 class CaseError(ValueError):
@@ -351,7 +351,7 @@ def run_case(case: Case, *, live_monitor: bool = False, verbose: bool = False, m
     initial_density: the start field of pass 0 instead of the method's own (a restart or a
     diagnostic start); observers: further observer objects (monitor.py's protocol), e.g. a
     diagnostic trace."""
-    from potential_flow_solver.monitor import ConsoleProgress, LiveConvergenceMonitor
+    from turbolenza.b2b.monitor import ConsoleProgress, LiveConvergenceMonitor
 
     s = case.settings
     live = LiveConvergenceMonitor(title=monitor_title or s.case_name) if live_monitor else None
@@ -632,7 +632,7 @@ def plot_run(run: RunResult, *, sonic_line: bool = True) -> dict:
     state), convergence. {} when the run has no solution."""
     import matplotlib.pyplot as plt
 
-    from potential_flow_solver import plots
+    from turbolenza.b2b import plots
 
     sol = run.solution
     if sol is None:
@@ -667,7 +667,7 @@ def _mach_contour_figure(run: RunResult):
     import matplotlib.pyplot as plt
     import numpy as np
 
-    from potential_flow_solver import plots
+    from turbolenza.b2b import plots
 
     sol = run.solution
     g = sol.grid

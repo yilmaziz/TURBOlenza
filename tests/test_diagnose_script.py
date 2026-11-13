@@ -24,9 +24,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from potential_flow_solver import boundary_conditions as bc
-from potential_flow_solver import coefficients, flow
-from potential_flow_solver import grid as gr
+from turbolenza.b2b import boundary_conditions as bc
+from turbolenza.b2b import coefficients, flow
+from turbolenza.b2b import grid as gr
 
 ROOT = Path(__file__).resolve().parents[1]
 

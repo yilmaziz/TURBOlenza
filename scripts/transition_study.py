@@ -334,10 +334,12 @@ def term_split(co, grid, bcs, psi, form="expanded") -> dict:
     full = raw_rows(A, B, C, D, E, grid, bcs, dm, deta, psi, form)
     no_de = raw_rows(A, B, C, Z, Z, grid, bcs, dm, deta, psi, form)
     ac = raw_rows(A, Z, C, Z, Z, grid, bcs, dm, deta, psi, form)
+    a_only = raw_rows(A, Z, Z, Z, Z, grid, bcs, dm, deta, psi, form)
     with_d = raw_rows(A, B, C, D, Z, grid, bcs, dm, deta, psi, form)
     with_e = raw_rows(A, B, C, Z, E, grid, bcs, dm, deta, psi, form)
     out = {}
-    for name, (a, b) in dict(full=(full, None), second=(ac, None), mixed=(no_de, ac), D_term=(with_d, no_de),
+    for name, (a, b) in dict(full=(full, None), without_DE=(no_de, None), second=(ac, None), A_ee=(a_only, None),
+                             C_mm=(ac, a_only), mixed=(no_de, ac), D_term=(with_d, no_de),
                              E_term=(with_e, no_de)).items():
         grid_part = a[0] if b is None else a[0] - b[0]
         per_part = {key: (a[1][key][0], a[1][key][1] - (0.0 if b is None else b[1][key][1])) for key in a[1]}
@@ -345,32 +347,51 @@ def term_split(co, grid, bcs, psi, form="expanded") -> dict:
     return out
 
 
+EDGE_ZONE_CHORDS = 0.1      # blade rows this close (in m) to the first / last blade station are "near LE / TE"
+
+
 def row_classes(grid) -> dict:
-    """Masks of the interior rows by class, and the periodic-line rows by kind."""
+    """Masks of the interior rows (j = 1 .. J - 1) by class, and (by name) the periodic-line rows.
+    "interior" is every row not in one of the named station classes; it is split further into
+    the blade rows near the LE and the TE (within EDGE_ZONE_CHORDS of the first / last blade
+    station), the smooth middle of the blade (its wall-adjacent rows j = 1, J - 1 apart), and the
+    periodic stations near the transitions (f-3, f-2, l+2, l+3) and far from them."""
     n_m, n_eta = len(grid.m), len(grid.eta)
     J = n_eta - 1
     f, l = grid.first_blade_i, grid.last_blade_i
+    m = np.asarray(grid.m)[:, None] * np.ones((1, n_eta))
+    i_idx = np.arange(n_m)[:, None] * np.ones((1, n_eta), int)
+    j_idx = np.ones((n_m, 1), int) * np.arange(n_eta)[None, :]
+    base = (i_idx >= 1) & (i_idx <= n_m - 2) & (j_idx >= 1) & (j_idx <= J - 1)
     masks = {}
-    station = {f - 1: "f-1", f: "f", f + 1: "f+1", l - 1: "l-1", l: "l", l + 1: "l+1"}
-    base = np.zeros((n_m, n_eta), bool)
-    base[1:-1, 1:J] = True
     taken = np.zeros_like(base)
-    for i, name in station.items():
-        m = np.zeros_like(base)
-        m[i, 1:J] = True
-        masks[name] = m & base
+    for i, name in {f - 1: "f-1", f: "f", f + 1: "f+1", l - 1: "l-1", l: "l", l + 1: "l+1"}.items():
+        masks[name] = base & (i_idx == i)
         taken |= masks[name]
-    wall = np.zeros_like(base)
-    wall[f + 2:l - 1, 1] = wall[f + 2:l - 1, J - 1] = True
-    masks["wall-adjacent"] = wall & base & ~taken
-    taken |= masks["wall-adjacent"]
-    masks["interior"] = base & ~taken
+    interior = base & ~taken
+    blade = (i_idx >= f) & (i_idx <= l)
+    c = grid.chord
+    near_le = blade & (m < grid.m[f] + EDGE_ZONE_CHORDS * c)
+    near_te = blade & (m > grid.m[l] - EDGE_ZONE_CHORDS * c)
+    middle = blade & ~near_le & ~near_te
+    wall = (j_idx == 1) | (j_idx == J - 1)
+    near_tr = ((i_idx >= f - 3) & (i_idx <= f - 2)) | ((i_idx >= l + 2) & (i_idx <= l + 3))
+    masks["interior"] = interior
+    masks["blade near LE (f+2 .. 0.1 c)"] = interior & near_le
+    masks["blade near TE (0.1 c .. l-2)"] = interior & near_te
+    masks["blade middle, wall-adjacent"] = interior & middle & wall
+    masks["blade middle"] = interior & middle & ~wall
+    masks["periodic near transitions"] = interior & ~blade & near_tr
+    masks["periodic far"] = interior & ~blade & ~near_tr
     return masks
 
 
-CLASS_ORDER = ("interior", "wall-adjacent", "f-1", "f", "f+1", "l-1", "l", "l+1",
+CLASS_ORDER = ("interior", "blade near LE (f+2 .. 0.1 c)", "blade middle", "blade middle, wall-adjacent",
+               "blade near TE (0.1 c .. l-2)", "periodic near transitions", "periodic far",
+               "f-1", "f", "f+1", "l-1", "l", "l+1",
                "periodic line", "periodic LE row (f-1, J)", "periodic TE row (l+1, J)")
-TERMS = ("full", "second", "mixed", "D_term", "E_term")
+TERMS = ("full", "without_DE", "second", "A_ee", "C_mm", "mixed", "D_term", "E_term")
+SUMMED = ("second", "mixed", "D_term", "E_term")        # the terms that add up to "full"
 
 
 def class_stats(split: dict, grid) -> dict:
@@ -381,17 +402,23 @@ def class_stats(split: dict, grid) -> dict:
     kind_name = {dz.PERIODIC_STANDARD: "periodic line", dz.PERIODIC_LE_TRANSITION: "periodic LE row (f-1, J)",
                  dz.PERIODIC_TE_TRANSITION: "periodic TE row (l+1, J)"}
     out = {}
+    f, l = grid.first_blade_i, grid.last_blade_i
     for cls in CLASS_ORDER:
         out[cls] = {}
         for term in TERMS:
             field, per = split[term]
+            where = ""
             if cls in masks:
                 v = field[masks[cls]]
+                if v.size and term == "full":
+                    a = np.where(masks[cls], np.abs(field), -1.0)
+                    i, j = np.unravel_index(int(np.argmax(a)), a.shape)
+                    where = f"({i}, {j}): i-f {i - f:+d}, l-i {l - i:+d}, m/c {grid.m[i] / grid.chord:.4f}"
             else:
                 v = np.array([val for (kind, val) in per.values() if kind_name[kind] == cls])
             v = v[np.isfinite(v)]
             out[cls][term] = dict(max=float(np.max(np.abs(v))) if v.size else math.nan,
-                                  rms=float(np.sqrt(np.mean(v ** 2))) if v.size else math.nan, n=int(v.size))
+                                  rms=float(np.sqrt(np.mean(v ** 2))) if v.size else math.nan, n=int(v.size), where=where)
     return out
 
 
@@ -403,7 +430,8 @@ def operator_study(form: str) -> dict:
             psi = uniform_psi(grid, gamma)
             split = term_split(co, grid, bcs, psi, form)
             # the split adds up to the full raw residual (linearity check)
-            f_, s_, m_, d_, e_ = (split[t][0] for t in TERMS)
+            f_ = split["full"][0]
+            s_, m_, d_, e_ = (split[t][0] for t in SUMMED)
             ok = np.isfinite(f_)
             gap = float(np.max(np.abs(f_[ok] - (s_[ok] + m_[ok] + d_[ok] + e_[ok])))) if ok.any() else math.nan
             results[(level, gamma)] = dict(stats=class_stats(split, grid), dm_over_c=grid.dm / grid.chord,
@@ -427,11 +455,16 @@ def report_operator(results: dict, form: str, title: str) -> list:
                                  order_max=fit["p"],
                                  order_last=(math.log(abs(maxes[-2]) / abs(maxes[-1])) / math.log(dm[-2] / dm[-1])
                                              if maxes[-1] and maxes[-2] and np.isfinite(maxes[-1]) else math.nan)))
+    for r in rows:
+        r["where_very_fine"] = results[("very_fine", r["gamma_deg"])]["stats"][r["row_class"]][r["term"]]["where"]
     for gamma in GAMMAS_DEG:
         sel = [r for r in rows if r["gamma_deg"] == gamma and r["term"] == "full"]
         table(sel, [("row_class", "row class")] + [(f"max_{level}", level) for level in LEVELS]
-              + [("order_max", "order (fit)"), ("order_last", "order f->vf")],
+              + [("order_max", "order (fit)"), ("order_last", "order f->vf"), ("where_very_fine", "max at (very_fine)")],
               f"{title}: max |raw residual| of the full row, gamma = {gamma:g} deg (p > 0 decays)", digits=3)
+    sel = [r for r in rows if r["gamma_deg"] == 33.0 and r["term"] == "full"]
+    table(sel, [("row_class", "row class")] + [(f"rms_{level}", level) for level in LEVELS],
+          f"{title}: RMS raw residual of the full row, gamma = 33 deg", digits=3)
     gamma = 33.0
     for term in TERMS[1:]:
         sel = [r for r in rows if r["gamma_deg"] == gamma and r["term"] == term]

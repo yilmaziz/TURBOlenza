@@ -312,6 +312,9 @@ class _Context:
     mass_flow_source: str = MASS_FLOW_OVERRIDE
     observers: _Observers = field(default_factory=lambda: _Observers(()))
     stop_at_sonic: bool = True              # config.iteration.stop_at_sonic
+    kutta_eval: str = "station"             # config.iteration.kutta_eval (study option; kutta.py section 7)
+    kutta_eval_offset_chords: float | None = None
+    kutta_eval_interpolation: str = "cubic"
 
 
 @dataclass(frozen=True)
@@ -570,11 +573,29 @@ def _context(grid: Grid, config: SolverConfig, mass_flow_per_depth: float, c_ref
                                         radius=conditions.stream_surface_radius,
                                         inlet_c_theta=conditions.inlet_absolute_tangential_velocity)
     inlet, mdot, source = _mass_flow(grid, config, mass_flow_per_depth, float(c_ref))
+    iteration = config.iteration
+    _check_kutta_options(iteration)
     return _Context(metrics=build_metrics(grid), boundary_conditions=build_boundary_conditions(grid), gas=config.gas,
                     reference=reference, mass_flow_per_depth=mdot, c_ref=float(c_ref),
-                    relaxation=config.iteration.density_relaxation,
+                    relaxation=iteration.density_relaxation,
                     blade=slice(grid.first_blade_i, grid.last_blade_i + 1), inlet=inlet, mass_flow_source=source,
-                    stop_at_sonic=bool(config.iteration.stop_at_sonic))
+                    stop_at_sonic=bool(iteration.stop_at_sonic), kutta_eval=iteration.kutta_eval,
+                    kutta_eval_offset_chords=iteration.kutta_eval_offset_chords,
+                    kutta_eval_interpolation=iteration.kutta_eval_interpolation)
+
+
+def _check_kutta_options(iteration) -> None:
+    """The Kutta study options of config.iteration (kutta.py section 7), refused before any pass."""
+    if iteration.kutta_eval not in kutta.KUTTA_EVALUATIONS:
+        raise SolverInputError(f"kutta_eval = {iteration.kutta_eval!r}: one of {kutta.KUTTA_EVALUATIONS}")
+    if iteration.kutta_eval == "fixed_m":
+        offset = iteration.kutta_eval_offset_chords
+        if offset is None or isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset):
+            raise SolverInputError(f"kutta_eval 'fixed_m' needs kutta_eval_offset_chords, a finite number of chords "
+                                   f"(got {offset!r})")
+        if iteration.kutta_eval_interpolation not in kutta.KUTTA_INTERPOLATIONS:
+            raise SolverInputError(f"kutta_eval_interpolation = {iteration.kutta_eval_interpolation!r}: one of "
+                                   f"{kutta.KUTTA_INTERPOLATIONS}")
 
 
 def _mass_flow(grid: Grid, config: SolverConfig, given, c_ref: float) -> tuple[InletState | None, float, str]:
@@ -653,7 +674,13 @@ def _kutta_step(current: _Pass, context: _Context) -> _Pass:
         except kutta.KuttaError:
             residual = None
         return replace(current, kutta=residual, exit_angle=angle, exit_angle_next=angle)
-    residual = kutta.kutta_residual(current.flow, grid)
+    if context.kutta_eval == "station":
+        residual = kutta.kutta_residual(current.flow, grid)
+    else:                                       # study option (kutta.py section 7): the speeds at m*
+        residual = kutta.residual_from_walls(
+            kutta.wall_values(current.flow, grid, evaluation=context.kutta_eval,
+                              offset_chords=context.kutta_eval_offset_chords,
+                              interpolation=context.kutta_eval_interpolation), grid)
     correction = kutta.exit_angle_correction(residual, current.flow, context.metrics)
     return replace(current, kutta=residual, correction=correction, exit_angle=angle,
                    exit_angle_next=kutta.next_exit_angle(angle, correction, context.kutta_relaxation))

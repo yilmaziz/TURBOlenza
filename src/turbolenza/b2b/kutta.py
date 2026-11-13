@@ -110,7 +110,23 @@ call and builds no matrix; solver.py runs the iteration (one correction per dens
     here: the caller passes config.IterationSettings.kutta_relaxation (project baseline
     config.KUTTA_RELAXATION).
 
-Status: implemented 2026-11-13, under review, not frozen.
+7. Study option: where the two wall speeds are read (wall_values, residual_from_walls)
+    [Kutta grid-convergence study, scripts/kutta_study.py, 2026-11-14; default "station"]
+    "station" (the default, sections 2 and 3): the wall nodes of the TE station l. It is
+        kutta_residual exactly: residual_from_walls(wall_values(flow, grid)) gives the same
+        numbers bit for bit.
+    "fixed_m": a fixed physical place m* = m_TE - offset * chord (grid.m_te, grid.chord),
+        the speed |W| (and W_m) of each wall interpolated along that wall's blade nodes
+        (stations first_blade_i .. last_blade_i, all on the blade) in m: "cubic", the
+        Lagrange cubic through the four nodes nearest m* (two on each side where the run
+        allows, else shifted inward), or "linear", between the two nodes around m*. m* must
+        lie within [m(first_blade_i), m(last_blade_i)], nodes on both sides; outside it is
+        refused (KuttaError), never extrapolated. The SS / PS identity is the TE station's,
+        and the correction keeps the TE station's S, beta0, beta1 and dm (section 5): only
+        the two speeds move.
+
+Status: implemented 2026-11-13, under review, not frozen. Section 7: a study option,
+2026-11-14.
 """
 
 from __future__ import annotations
@@ -123,6 +139,10 @@ import numpy as np
 from turbolenza.b2b.flow import FlowField
 from turbolenza.b2b.grid import Grid
 from turbolenza.b2b.metrics import GridMetrics
+
+
+KUTTA_EVALUATIONS = ("station", "fixed_m")        # section 7; "station" is the default and the production rule
+KUTTA_INTERPOLATIONS = ("cubic", "linear")       # "fixed_m" only
 
 
 class KuttaError(ValueError):
@@ -254,3 +274,96 @@ def next_exit_angle(exit_angle: float, correction: ExitAngleCorrection, relaxati
     if step == 0.0:
         return angle                    # equal TE speeds: the angle stays exactly (no tan / arctan round trip)
     return math.atan(math.tan(angle) + step)
+
+
+# --- section 7: where the wall speeds are read (study option, 2026-11-14) ---------------------------------------
+
+@dataclass(frozen=True)
+class WallValues:
+    """The two wall speeds at the place where the Kutta condition is evaluated (module
+    docstring, section 7). Walls are Aungier's: 0 the eta = 0 wall (theta0), 1 the eta = 1
+    wall (theta1)."""
+
+    evaluation: str                 # "station" | "fixed_m"
+    m: float                        # where, the grid's length unit
+    W0: float                       # |W| on the eta = 0 wall
+    W1: float                       # |W| on the eta = 1 wall
+    W_m0: float                     # W_m on the eta = 0 wall
+    W_m1: float                     # W_m on the eta = 1 wall
+    stations: tuple[int, ...]       # the blade stations whose wall nodes were read
+    interpolation: str | None       # "cubic" | "linear" for "fixed_m"; None at the station
+
+
+def wall_values(flow: FlowField, grid: Grid, evaluation: str = "station", offset_chords: float | None = None,
+                interpolation: str = "cubic") -> WallValues:
+    """The wall speeds of flow on grid where the Kutta condition is read (module docstring,
+    section 7): at the TE station ("station", the default) or interpolated along both walls to
+    m* = m_TE - offset_chords * chord ("fixed_m")."""
+    if not isinstance(grid, Grid):
+        raise TypeError(f"wall_values takes a Grid, got {type(grid).__name__}")
+    shape = (len(grid.m), len(grid.eta))
+    W_m, W_theta = np.asarray(flow.W_m, dtype=float), np.asarray(flow.W_theta, dtype=float)
+    if W_m.shape != shape or W_theta.shape != shape:
+        raise KuttaError(f"the flow has shape {W_m.shape}, the grid {shape}")
+    last = shape[1] - 1
+    f, l = grid.first_blade_i, grid.last_blade_i
+    if evaluation == "station":
+        speed = np.hypot(W_m[l], W_theta[l])
+        values = (float(speed[0]), float(speed[last]), float(W_m[l, 0]), float(W_m[l, last]))
+        if not all(math.isfinite(v) for v in values):
+            raise KuttaError(f"a wall speed at the TE station {l} is not finite")
+        return WallValues(evaluation="station", m=float(grid.m[l]), W0=values[0], W1=values[1], W_m0=values[2],
+                          W_m1=values[3], stations=(l,), interpolation=None)
+    if evaluation != "fixed_m":
+        raise KuttaError(f"unknown Kutta evaluation {evaluation!r}; expected one of {KUTTA_EVALUATIONS}")
+    if interpolation not in KUTTA_INTERPOLATIONS:
+        raise KuttaError(f"unknown interpolation {interpolation!r}; expected one of {KUTTA_INTERPOLATIONS}")
+    if (offset_chords is None or isinstance(offset_chords, bool) or not isinstance(offset_chords, (int, float))
+            or not math.isfinite(offset_chords)):
+        raise KuttaError(f"the fixed_m evaluation needs a finite offset in chords, got {offset_chords!r}")
+    m_star = float(grid.m_te) - float(offset_chords) * float(grid.chord)
+    m = np.asarray(grid.m, dtype=float)
+    if not (m[f] <= m_star <= m[l]):
+        raise KuttaError(f"m* = m_TE - {offset_chords:g} chord = {m_star:.6g} lies outside the blade wall nodes "
+                         f"[{m[f]:.6g}, {m[l]:.6g}] (stations {f} .. {l}): no nodes on both sides, nothing is "
+                         f"extrapolated")
+    p = min(int(np.searchsorted(m, m_star, side="right")) - 1, l - 1)      # m[p] <= m* <= m[p + 1], f <= p < l
+    if interpolation == "linear":
+        nodes = np.array([p, p + 1])
+    else:
+        if l - f < 3:
+            raise KuttaError(f"the cubic needs four blade stations, the run {f} .. {l} has {l - f + 1}")
+        start = min(max(p - 1, f), l - 3)
+        nodes = np.arange(start, start + 4)
+    weights = _lagrange_weights(m[nodes], m_star)
+    speed = np.hypot(W_m[nodes], W_theta[nodes])
+    values = (float(weights @ speed[:, 0]), float(weights @ speed[:, last]), float(weights @ W_m[nodes, 0]),
+              float(weights @ W_m[nodes, last]))
+    if not all(math.isfinite(v) for v in values):
+        raise KuttaError(f"a wall speed near m* = {m_star:.6g} is not finite")
+    return WallValues(evaluation="fixed_m", m=m_star, W0=values[0], W1=values[1], W_m0=values[2], W_m1=values[3],
+                      stations=tuple(int(k) for k in nodes), interpolation=interpolation)
+
+
+def _lagrange_weights(x: np.ndarray, x0: float) -> np.ndarray:
+    """Weights w with sum_k w_k y_k the interpolating polynomial through (x_k, y_k) at x0."""
+    w = np.ones(len(x))
+    for k in range(len(x)):
+        for j in range(len(x)):
+            if j != k:
+                w[k] *= (x0 - x[j]) / (x[k] - x[j])
+    return w
+
+
+def residual_from_walls(walls: WallValues, grid: Grid) -> KuttaResidual:
+    """R_K, eps_K and W0 - W1 of the wall speeds walls (module docstring, sections 3 and 7), the
+    SS / PS identity of grid's TE station; for "station" values exactly kutta_residual."""
+    station = trailing_edge_station(grid)
+    last = len(grid.eta) - 1
+    speed = {0: float(walls.W0), last: float(walls.W1)}
+    W_ss, W_ps = speed[station.ss_j], speed[station.ps_j]
+    residual = W_ss - W_ps
+    mean = 0.5 * (abs(W_ss) + abs(W_ps))
+    normalized = abs(residual) / mean if mean > 0.0 else 0.0
+    return KuttaResidual(station=station, W_ss=W_ss, W_ps=W_ps, residual=residual, normalized=normalized,
+                         wall_difference=speed[0] - speed[last])

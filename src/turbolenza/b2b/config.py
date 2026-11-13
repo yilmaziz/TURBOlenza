@@ -135,6 +135,11 @@ class IterationSettings:
     velocity_tolerance: float | None = None         # velocity change per pass; None: density_tolerance
     kutta_relaxation: float = KUTTA_RELAXATION      # lambda_K, 0 < lambda_K <= 1: ours (Aungier gives none)
     stop_at_sonic: bool = True                      # False: go on past M_rel >= 1 (observation only)
+    # Kutta study options (scripts/kutta_study.py, 2026-11-14; kutta.py section 7). The defaults are the
+    # production rule: the two wall speeds of the TE station.
+    kutta_eval: str = "station"                     # "station" | "fixed_m" (m* = m_TE - offset * chord)
+    kutta_eval_offset_chords: float | None = None   # "fixed_m" only: the offset of m* ahead of m_TE, chords
+    kutta_eval_interpolation: str = "cubic"         # "fixed_m" only: "cubic" | "linear" along each wall in m
 
 
 @dataclass(frozen=True)

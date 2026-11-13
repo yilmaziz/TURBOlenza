@@ -51,7 +51,9 @@ over the whole blade, then builds the stations, the blade-passage topology, the 
 and the nodes; rebuild_exit turns the exit extension to a new discharge angle. Coordinates
 only: no wall slope, metric or flow quantity is computed here (for C2, Grid hands on the
 curves' own u derivatives at the wall nodes, section 7, and metrics.py forms the slopes).
-node_index and node_theta are not implemented. Deferred, not resolved: the straight m-links
+Section 9 (2026-11-13, under review) adds the geometry-driven standard grids (five named
+levels, build_grid, build_grid_family); make_grid's explicit n_passage path is unchanged bit
+for bit. node_index and node_theta are not implemented. Deferred, not resolved: the straight m-links
 across the LE and TE transition intervals (section 6) are for metrics.py and
 discretization.py to review.
 
@@ -324,13 +326,123 @@ discretization.py to review.
     bound from the two piece ends holds, and the same zoom finds a narrow waist to
     round-off. The straight-segment span of section 4 becomes the curve's span at the piece
     ends.
+
+8. Admissible n_passage: the wall-station topology (2026-11-12)
+    The meridional grid stays uniform (section 2); not every n_passage gives the passage
+    topology of Aungier's Fig. 5-3 at the blade's ends. A uniform grid is admissible when
+    its first blade station cuts the reference blade exactly twice, once on geometry.py's
+    suction and once on its pressure surface, and so does its last blade station, neither
+    line passing through the LE or TE point itself (EdgeStationTopology.valid). The surfaces
+    are those of the crossings (C2: the curve each branch belongs to; C1: the outline
+    segment's side of the LE point), the same ones Grid.wall_identity names.
+
+    Why it fails. The nose tip, the most upstream point, lies on one surface (the suction
+    surface for positive stagger) a window w_LE = m_le - m_tip ahead of the LE point; a
+    station line in (m_tip, m_le] crosses that surface twice (the surface runs from the LE
+    point to the tip and back past m_le) and the other one not at all. The TE mirrors it
+    with w_TE = m_tail - m_te. The first blade station is the first station past the tip,
+    so it lies in (m_tip, m_tip + dm], and the last in [m_tail - dm, m_tail): which part of
+    the nose a station meets is set by where the uniform stations fall, so admissible and
+    inadmissible n_passage alternate. Once dm <= w (either window) every station placement
+    fails, and since dm never grows with n_passage every finer grid fails too
+    (n_passage_ceiling).
+
+    The rule rejects; it never repairs. make_grid builds the stations of settings.n_passage
+    as before and, by default, accepts any topology (the tracked-contour walls of section 3
+    describe every such grid correctly); make_grid(..., require_ss_ps=True) and
+    validate_uniform_grid_topology raise GridTopologyError for an inadmissible grid, naming
+    the failing station, the nose tip (tail end) and the LE (TE) point, the nearest
+    admissible n_passage on either side, the finest admissible one and the ceiling. No
+    station is moved and no n_passage is substituted. find_valid_n_passage lists the
+    admissible values in a range and wall_station_topology reads a built grid; both are
+    read-only.
+
+    What the rule does not change: the mapping. A valid first blade station lies past the
+    LE point, but the side lines still meet the walls at the nose tip and tail end with the
+    jump of their anchoring at the LE / TE point (section 1); the two are separate issues.
+
+9. Geometry-driven standard grids (2026-11-13; UNDER REVIEW)
+    Two modes. EXPLICIT (legacy; verification, regression and manufactured tests):
+    make_grid with GridSettings(n_passage, n_eta), the lattice of section 2, unchanged bit for
+    bit; whether its blade ends are admissible depends on where those stations happen to fall
+    (section 8). STANDARD (the physical and scientific interface): build_grid(cascade, level)
+    for one of GRID_LEVELS = very_coarse, coarse, medium, fine, very_fine, build_grid_family
+    for all five (one GridPackage), or GridSettings(level=...) through make_grid and so the
+    solver. The geometry owns admissibility; no n_passage is remembered.
+
+    Transitions (passage_transitions). From the m ranges of the outline's monotone pieces (C2
+    branches, C1 segments; half-open, as the cuts count them) the crossings per surface are
+    known on every interval between piece ends. The SS + PS-valid interval (m_start, m_end) is
+    the run of intervals with exactly one suction and one pressure crossing that holds the
+    middle of the chord. Three kinds of blade end are kept apart: the outline's extremes
+    (nose tip m_tip, tail end m_tail), geometry.py's construction points (m_le, m_te) and
+    (m_start, m_end). For the 65-(12A10)10 at 33 deg (C2) m_start = m_le and m_end = m_te; the
+    nose tip lies 0.004524 c ahead on the suction surface (lines between cross it twice) and a
+    Kovach tail end 1.35e-5 c behind on the pressure surface (emery_base: none). The LE window
+    (m_tip, m_start] and the TE window [m_end, m_tail) may hold no station at all.
+
+    Lattice. The LE face (m_tip + m_start) / 2 and the TE face (m_end + m_tail) / 2, the
+    middles of the two windows, are cell faces: n_cells cells of dm = (te_face - le_face) /
+    n_cells, stations at the cell centres. So f - 1 and f lie (dm - w_LE) / 2 ahead of the nose
+    tip and behind m_start, the same clearance on both sides of the window (l and l + 1 at the
+    TE), at every level; a station can never land on the LE or TE point, and a lattice exists
+    whenever dm exceeds both windows (the bound of section 8, now reached by every level, not
+    by lucky n_passage). Each clearance must be at least TRANSITION_CLEARANCE = 0.1 dm (no
+    station nearly through the nose tip or the LE point). f is then read, not assumed: the
+    first station whose line crosses the blade once on each surface, f - 1 crosses it not at
+    all; the same for l and l + 1 (checked on the cut, below).
+
+    Levels and the candidate search. Target dm / c per level: MEDIUM_DM_OVER_CHORD = 0.020
+    times LEVEL_REFINEMENT_RATIO = sqrt(2) to the power 2 - k: 0.0400, 0.0283, 0.0200, 0.0141,
+    0.0100 (very_coarse, medium and very_fine a factor 2 apart). Candidates: every n_cells whose
+    dm lies within CANDIDATE_BAND = 10 % of the target, tried nearest first (|ln(dm/target)|);
+    the first that passes every condition is the level's grid. Neighboring bands cannot
+    overlap (0.9 sqrt 2 > 1.1), so dm falls strictly from level to level. Rejection reasons
+    (CandidateStatistics, GridGenerationError): invalid LE cut, invalid TE cut (a window too
+    wide for the clearance, or a station beside the blade meeting it), wrong branch identity
+    (a blade station not one suction + one pressure crossing, through the LE or TE point, or a
+    wall changing surface), extension outside tolerance, eta-resolution issue, other topology
+    failure (a GridError of the Grid itself, metrics.py refusing it).
+
+    Eta. n_eta - 1 = round(pitch / (CELL_ASPECT dm)) with CELL_ASPECT = 1.8, the ratio of the
+    periodic-line cell height pitch deta to dm that the project's hand-picked grids had (43 x
+    29, 61 x 41, 87 x 59: 1.79 to 1.83). Not a requirement of Aungier's: it keeps the m and eta
+    resolutions in one proportion across the levels (2-D refinement, deta strictly falling
+    too). Fewer than MIN_ETA_CELLS = 6 cells reject the candidate.
+
+    Extensions. With dm fixed, whole cells reach out to the nominal lengths (1 chord each, from
+    m_le and m_te as in section 1): k_up = round((m_first - (m_le - L_up)) / dm) inlet stations,
+    and so for the exit. The actual lengths differ from the nominal ones by at most dm / 2;
+    more than EXTENSION_TOLERANCE_CHORDS = 0.05 c rejects the candidate. Exact uniform dm comes
+    first, an exact 1.000 c extension second. The side lines are those of section 1 for these
+    lengths; the stations are linspace(m_in, m_out), uniform to round-off (measured 2.6e-16 to
+    5.4e-16 c on the five 65-(12A10)10 levels; UNIFORM_SPACING_TOLERANCE 1e-13 c).
+
+    Validation (validate_standard_grid, on every accepted grid): distinct stations, uniform dm
+    and deta, 1 <= f <= l <= n_m - 2, f - 1 and l + 1 meeting no blade, every blade station
+    inside (m_start, m_end) with one suction and one pressure crossing, the wall identity
+    constant along each wall (no flip) and no hidden crossing, finite nodes, positive width,
+    and metrics.py building the grid's metrics with S > 0. A failed level raises
+    GridGenerationError (level, geometry_id, every candidate and its reason); no malformed grid
+    is ever returned. A geometry without an SS + PS-valid interval, or with a closed passage,
+    fails at every level.
+
+    Timing (time.perf_counter): StandardGrid.timing holds the geometry interrogation (row,
+    transitions, passage check), the search, and inside it the intersections (station cuts),
+    the construction (boundaries, Grid) and the validation; GridPackage.timing the shared
+    interrogation, each level's search and the total. The stations do not depend on the flow
+    angles: a level's grid is the same at any inlet or exit angle but for the side lines.
 """
 
 from __future__ import annotations
 
+import hashlib
 import math
+import time
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from functools import cached_property
+from types import MappingProxyType
 
 import numpy as np
 from numpy.typing import NDArray
@@ -359,6 +471,26 @@ class GridError(ValueError):
     station, a Grid's nodes leave no positive width at a station or put both wall nodes
     of a blade station on one point of the blade's cut, or a wall leaves its contour, runs
     backward along it or changes its named surface away from the LE and TE points."""
+
+
+class GridTopologyError(GridError):
+    """A uniform grid whose first or last blade station does not cut exactly one suction
+    and one pressure surface (module docstring, section 8): its n_passage is not admissible
+    for the cascade. Raised by validate_uniform_grid_topology and by
+    make_grid(..., require_ss_ps=True); the grid is never changed to avoid it.
+
+    edge: "LE", "TE" or "LE and TE", the station(s) that fail; n_passage: the requested
+    value (None when not known); nearest_lower, nearest_higher: the admissible n_passage
+    next to it on either side (None when there is none, or n_passage is not known); finest:
+    the largest admissible n_passage (None when there is none); ceiling: the first
+    n_passage from which every finer one fails (None when the blade has neither window)."""
+
+    def __init__(self, message: str, *, edge: str, n_passage: int | None, nearest_lower: int | None,
+                 nearest_higher: int | None, finest: int | None, ceiling: int | None) -> None:
+        super().__init__(message)
+        self.edge, self.n_passage = edge, n_passage
+        self.nearest_lower, self.nearest_higher = nearest_lower, nearest_higher
+        self.finest, self.ceiling = finest, ceiling
 
 
 @dataclass(frozen=True)
@@ -727,7 +859,7 @@ def make_passage_boundaries(cascade: Cascade, settings: GridSettings, inlet_angl
 
 
 def make_grid(cascade: Cascade, settings: GridSettings, inlet_angle: float,
-              exit_angle: float | None = None) -> Grid:
+              exit_angle: float | None = None, *, require_ss_ps: bool = False) -> Grid:
     """The structured grid of one passage of cascade: make_passage_boundaries, then the
     uniform stations, the blade-passage topology from the cuts of the station lines with
     the blade row, the wall values at the blade stations and the nodes (module docstring,
@@ -736,24 +868,50 @@ def make_grid(cascade: Cascade, settings: GridSettings, inlet_angle: float,
     Angles as in make_passage_boundaries, in radians; exit_angle None takes
     cascade.kappa_te.
 
+    require_ss_ps (keyword only): also require the first and the last blade station each to
+    cut exactly one suction and one pressure surface (section 8) and raise
+    GridTopologyError otherwise. The grid is never changed to meet it: the stations are
+    those of settings.n_passage either way. False (the default) builds the grid as before,
+    whatever its wall-station topology; validate_uniform_grid_topology checks such a grid
+    afterwards.
+
     Raises what make_passage_boundaries raises, ValueError for n_eta below 2, and
     GridError when the passage is not open over the whole blade (the passage check of
     section 4: the straight-segment cut spans a pitch or more somewhere, or the smooth walls
     leave no width above TOUCH chords somewhere; checked before any station, so the same
     for every n_passage and n_eta), when no station cuts the blade (n_passage too small for
     the blade to be seen), the stations that cut it are not one run, or the blade reaches a
-    far station. Only to name the blade in the passage-check message, make_grid reads
-    cascade.metadata and cascade.stagger.
+    far station; with require_ss_ps, GridTopologyError (a GridError) for an inadmissible
+    n_passage. Only to name the blade in the messages, make_grid reads cascade.metadata
+    and cascade.stagger.
     """
     _check_inputs(cascade, settings, "make_grid")
+    if settings.level is not None:                  # the geometry-driven standard-grid mode (section 9)
+        if settings.n_passage is not None or settings.n_eta is not None:
+            raise ValueError(f"GridSettings with level = {settings.level!r} take no n_passage or n_eta (got "
+                             f"{settings.n_passage!r}, {settings.n_eta!r}): the level sets the resolution; give either "
+                             f"a level or n_passage and n_eta (the explicit mode)")
+        return build_grid(cascade, settings.level, inlet_angle=inlet_angle, exit_angle=exit_angle,
+                          extension_chords=(settings.upstream_extension_chords, settings.downstream_extension_chords)).grid
     b = make_passage_boundaries(cascade, settings, inlet_angle, exit_angle)
     n_eta = _whole_number(settings.n_eta, "n_eta", 2)
     row = _row_of(b)
     _check_passage(cascade, b, row)
 
-    dm_target = (b.m_te - b.m_le) / settings.n_passage
-    m = np.linspace(b.m_in, b.m_out, max(1, round((b.m_out - b.m_in) / dm_target)) + 1)
-    cut = row.cut(m)
+    grid = _grid_on_stations(b, row, _stations(b, settings.n_passage), n_eta)
+    if require_ss_ps:
+        validate_uniform_grid_topology(grid, n_passage=settings.n_passage, stagger=cascade.stagger)
+    return grid
+
+
+def _grid_on_stations(b: PassageBoundaries, row: _Row, m: NDArray[np.float64], n_eta: int,
+                      cut: _Cut | None = None) -> Grid:
+    """The Grid on given stations m (make_grid's sections 3 to 5): the blade-passage topology
+    from the cuts of the station lines, the wall values at the blade stations and the nodes.
+    make_grid gives it its uniform stations of n_passage; build_grid (section 9) its
+    geometry-anchored lattice, with the cut it has already made of those stations."""
+    if cut is None:
+        cut = row.cut(m)
     blade = np.flatnonzero(cut.cuts_blade)
     if blade.size == 0:
         raise GridError(f"no station cuts the blade: dm = {(m[1] - m[0]) / b.chord:.4g} chords lets the blade fall "
@@ -781,6 +939,13 @@ def make_grid(cascade: Cascade, settings: GridSettings, inlet_angle: float,
     return Grid(boundaries=b, m=m, eta=eta, nodes=nodes, first_blade_i=first, last_blade_i=last)
 
 
+def _stations(b: PassageBoundaries, n_passage: int) -> NDArray[np.float64]:
+    """The uniform stations of make_grid (module docstring, section 2): one constant dm, as
+    close to (m_te - m_le) / n_passage as the exact m_in and m_out allow."""
+    dm_target = (b.m_te - b.m_le) / n_passage
+    return np.linspace(b.m_in, b.m_out, max(1, round((b.m_out - b.m_in) / dm_target)) + 1)
+
+
 def rebuild_exit(item: Grid | PassageBoundaries, exit_angle: float) -> Grid | PassageBoundaries:
     """The same Grid or PassageBoundaries with the exit extension turned to a new discharge
     angle exit_angle, in radians. Only the exit side changes: exit_angle, downstream_beta
@@ -804,6 +969,210 @@ def rebuild_exit(item: Grid | PassageBoundaries, exit_angle: float) -> Grid | Pa
         nodes[exit_, :, 1] = _across(item.eta, lower, lower + boundaries.periodic_translation[1])
         return replace(item, boundaries=boundaries, nodes=nodes)
     raise TypeError(f"rebuild_exit takes a Grid or PassageBoundaries, got {type(item).__name__}")
+
+
+# --- Admissible n_passage: the wall-station topology (section 8) ---------------------
+
+@dataclass(frozen=True)
+class EdgeStationTopology:
+    """How the first (edge "LE") or the last (edge "TE") blade station of a uniform grid
+    cuts the reference blade (module docstring, section 8): its crossings with the outline
+    (C2: the authoritative curves) and on which of geometry.py's named surfaces they lie."""
+
+    edge: str                   # "LE": the first blade station; "TE": the last blade station
+    station: int                # its index i
+    m: float                    # its m
+    crossings: int              # crossings of the reference blade on the station line
+    suction: int                # of them on the suction surface
+    pressure: int               # of them on the pressure surface
+    branch_point: float         # m of geometry.py's LE (TE) point, where the two surfaces meet
+    extreme: float              # m of the blade's most upstream (downstream) point, its nose tip (tail end)
+    on_branch_point: bool       # the line passes within TOUCH chord of that LE (TE) point itself
+
+    @property
+    def valid(self) -> bool:
+        """One suction and one pressure crossing, neither of them on the branch point."""
+        return self.crossings == 2 and self.suction == 1 and self.pressure == 1 and not self.on_branch_point
+
+
+def wall_station_topology(grid: Grid) -> tuple[EdgeStationTopology, EdgeStationTopology]:
+    """(LE, TE): the first and the last blade station of grid read against the blade
+    (module docstring, section 8). Read-only."""
+    if not isinstance(grid, Grid):
+        raise TypeError(f"wall_station_topology takes a Grid, got {type(grid).__name__}")
+    b = grid.boundaries
+    row = _row_of(b)
+    cut = row.cut(grid.m[[grid.first_blade_i, grid.last_blade_i]])
+    return (_edge_topology(row, b, cut, 0, "LE", grid.first_blade_i),
+            _edge_topology(row, b, cut, 1, "TE", grid.last_blade_i))
+
+
+def validate_uniform_grid_topology(grid: Grid, *, n_passage: int | None = None, stagger: float | None = None) -> None:
+    """GridTopologyError unless the first and the last blade station of grid each cut
+    exactly one suction and one pressure surface (module docstring, section 8). Nothing is
+    changed or chosen: the error names the station, the nose tip (tail end) and the LE (TE)
+    point, and, for the n_passage that built the grid (keyword, optional), the nearest
+    admissible values on either side; it also gives the finest admissible n_passage and the
+    first n_passage from which every finer one fails. stagger (radians, optional) only
+    names the cascade in the message."""
+    le, te = wall_station_topology(grid)
+    if le.valid and te.valid:
+        return
+    b = grid.boundaries
+    row = _row_of(b)
+    ceiling = _ceiling(b, row)
+
+    def admissible(n: int) -> bool:
+        topology = _lattice_topology(b, row, n)
+        return topology is not None and topology[0].valid and topology[1].valid
+
+    finest = None
+    if ceiling is not None:
+        finest = next((n for n in range(ceiling - 1, 0, -1) if admissible(n)), None)
+    lower = higher = None
+    if n_passage is not None:
+        n_passage = _whole_number(n_passage, "n_passage", 1)
+        if ceiling is not None and n_passage >= ceiling:
+            lower = finest
+        else:
+            lower = next((n for n in range(n_passage - 1, 0, -1) if admissible(n)), None)
+            top = ceiling if ceiling is not None else 4 * n_passage + 100
+            higher = next((n for n in range(n_passage + 1, top) if admissible(n)), None)
+    bad = [t for t in (le, te) if not t.valid]
+    edge = " and ".join(t.edge for t in bad)
+    named = f" (stagger {math.degrees(stagger):.6g} deg)" if stagger is not None else ""
+    head = (f"n_passage = {n_passage} is not admissible for this cascade{named}" if n_passage is not None else
+            f"this uniform grid is not admissible for its cascade{named}")
+    lines = [head + ": the first and the last blade station must each cut one suction and one pressure surface."]
+    lines += [_describe_edge(t) for t in bad]
+    choice = "Choose another admissible n_passage; none is substituted."
+    if n_passage is not None:
+        choice += (f" Nearest admissible: lower {lower if lower is not None else 'none'}, higher "
+                   f"{higher if higher is not None else 'none'}.")
+    if ceiling is not None:
+        tip, tail = row.extremes
+        windows = {"LE window m_le - nose tip": b.m_le - tip, "TE window tail end - m_te": tail - b.m_te}
+        name, width = max(((k, w) for k, w in windows.items() if w > row.touch), key=lambda item: item[1])
+        choice += (f" Finest admissible n_passage: {finest if finest is not None else 'none'}; every n_passage from "
+                   f"{ceiling} on fails (dm <= {width:.4g}, the {name}). Coarser values can fail too: which ones pass "
+                   f"depends on where the uniform stations fall (find_valid_n_passage lists them).")
+    else:
+        choice += " This blade has no LE or TE window, so no refinement ceiling exists."
+    lines.append(choice)
+    raise GridTopologyError("\n".join(lines), edge=edge, n_passage=n_passage, nearest_lower=lower,
+                            nearest_higher=higher, finest=finest, ceiling=ceiling)
+
+
+def find_valid_n_passage(cascade: Cascade, settings: GridSettings, inlet_angle: float, n_values) -> tuple[int, ...]:
+    """The admissible n_passage among n_values (module docstring, section 8), ascending:
+    those whose uniform stations, make_grid's for this cascade and settings' extension
+    lengths, give a first and a last blade station that each cut one suction and one
+    pressure surface. settings.n_passage is not used. Read-only: no Grid is built and
+    nothing is chosen. Raises what make_passage_boundaries raises, and GridError when the
+    passage is not open (the passage check of section 4, as make_grid)."""
+    _check_inputs(cascade, settings, "find_valid_n_passage")
+    b = make_passage_boundaries(cascade, settings, inlet_angle)
+    row = _row_of(b)
+    _check_passage(cascade, b, row)
+    out = set()
+    for value in n_values:
+        n = _whole_number(value, "n_passage", 1)
+        topology = _lattice_topology(b, row, n)
+        if topology is not None and topology[0].valid and topology[1].valid:
+            out.add(n)
+    return tuple(sorted(out))
+
+
+def n_passage_ceiling(cascade: Cascade, settings: GridSettings, inlet_angle: float) -> int | None:
+    """The first n_passage from which every finer n_passage fails the wall-station
+    topology (module docstring, section 8): the smallest n_passage whose dm is at most the
+    LE window (m_le - nose tip) or the TE window (tail end - m_te); None when the blade has
+    neither window. Below it, admissibility depends on where the stations fall: use
+    find_valid_n_passage. Read-only."""
+    _check_inputs(cascade, settings, "n_passage_ceiling")
+    b = make_passage_boundaries(cascade, settings, inlet_angle)
+    return _ceiling(b, _row_of(b))
+
+
+def _edge_topology(row: _Row, b: PassageBoundaries, cut: _Cut, k: int, edge: str, station: int) -> EdgeStationTopology:
+    """EdgeStationTopology of row k of cut (the station's crossings, in height order)."""
+    count = int(cut.count[k])
+    names = row.surface_of(cut.segment[k, :count])
+    m = float(cut.m[k])
+    tip, tail = row.extremes
+    branch, extreme = (b.m_le, tip) if edge == "LE" else (b.m_te, tail)
+    return EdgeStationTopology(edge=edge, station=int(station), m=m, crossings=count,
+                               suction=int(np.count_nonzero(names == "suction")),
+                               pressure=int(np.count_nonzero(names == "pressure")), branch_point=float(branch),
+                               extreme=float(extreme), on_branch_point=bool(abs(m - branch) <= row.touch))
+
+
+def _lattice_topology(b: PassageBoundaries, row: _Row,
+                      n_passage: int) -> tuple[EdgeStationTopology, EdgeStationTopology] | None:
+    """(LE, TE) of the uniform grid of n_passage by make_grid's own stations and blade-run
+    rule, without building it; None when make_grid would refuse the stations (no station
+    cuts the blade, the stations that cut it are not one run, or the blade reaches a far
+    station)."""
+    m = _stations(b, n_passage)
+    cut = row.cut(m)
+    blade = np.flatnonzero(cut.cuts_blade)
+    if blade.size == 0 or blade.size != blade[-1] - blade[0] + 1 or blade[0] == 0 or blade[-1] == len(m) - 1:
+        return None
+    first, last = int(blade[0]), int(blade[-1])
+    return _edge_topology(row, b, cut, first, "LE", first), _edge_topology(row, b, cut, last, "TE", last)
+
+
+def _ceiling(b: PassageBoundaries, row: _Row) -> int | None:
+    """Smallest n_passage whose station spacing dm is at most a window, w = m_le - nose tip
+    or tail end - m_te (the smaller of the two such n_passage); None without a window.
+
+    Why every finer n_passage then fails: the first blade station is the first station
+    past the nose tip, so it lies in (m_tip, m_tip + dm]; with dm <= w that is inside
+    (m_tip, m_le], where the line crosses the surface that holds the nose tip at least twice
+    (the surface runs from the LE point to the tip and back past m_le) or passes through
+    the LE point itself. The TE mirrors it: the last blade station lies in [m_tail - dm,
+    m_tail). dm = (m_out - m_in) / round((m_out - m_in) n / (m_te - m_le)) never grows with
+    n, so the condition holds for every larger n."""
+    tip, tail = row.extremes
+    windows = [w for w in (b.m_le - tip, tail - b.m_te) if w > row.touch]
+    if not windows:
+        return None
+    width, length = b.m_out - b.m_in, b.m_te - b.m_le
+
+    def spacing(n: int) -> float:
+        return width / max(1, round(width / (length / n)))
+
+    found = []
+    for w in windows:
+        n = max(1, int(length / w) - 2)
+        while spacing(n) > w:
+            n += 1
+        while n > 1 and spacing(n - 1) <= w:
+            n -= 1
+        found.append(n)
+    return min(found)
+
+
+def _describe_edge(t: EdgeStationTopology) -> str:
+    """The error-message paragraph for one failing edge station."""
+    if t.edge == "LE":
+        where, point, extreme, inside = "First", "LE point", "nose tip", t.extreme < t.m < t.branch_point
+        interval = "the nose-return interval between the nose tip and the LE point"
+    else:
+        where, point, extreme, inside = "Last", "TE point", "tail end", t.branch_point < t.m < t.extreme
+        interval = "the tail-return interval between the TE point and the tail end"
+    text = (f"{where} blade station i = {t.station}: m = {t.m:.6g}; {extreme} m = {t.extreme:.6g}; {point} "
+            f"(suction / pressure branch point) m = {t.branch_point:.6g}. ")
+    if t.on_branch_point:
+        return text + (f"The station line passes through the {point} itself, where the two surfaces meet, so its "
+                       f"wall nodes are not one suction and one pressure node.")
+    if inside:
+        surface = "suction" if t.suction >= t.pressure else "pressure"
+        return text + (f"The station lies inside {interval}, so its line crosses the {surface} surface twice "
+                       f"({t.suction} suction, {t.pressure} pressure crossings) instead of producing one suction and "
+                       f"one pressure wall node.")
+    return text + (f"Its line crosses the blade {t.crossings} times ({t.suction} suction, {t.pressure} pressure) "
+                   f"instead of once on each surface.")
 
 
 def _check_passage(cascade: Cascade, b: PassageBoundaries, row: _Row) -> None:
@@ -978,6 +1347,17 @@ class _BladeRow(_Row):
         order = np.argsort(self.outline[:-1, 0], kind="stable")    # the last vertex closes the loop on vertex 0
         self.tip, self.tail = int(order[0]), int(order[-1])        # most upstream, most downstream vertex
 
+    def surface_of(self, segment: NDArray[np.int64]) -> NDArray[np.str_]:
+        """geometry.py's named surface of each polyline segment: the outline runs over the
+        suction surface (TE -> LE) up to vertex n_suction - 1, the LE point, then over the
+        pressure surface."""
+        return np.where(np.asarray(segment) < self.n_suction - 1, "suction", "pressure")
+
+    @property
+    def extremes(self) -> tuple[float, float]:
+        """m of the blade's most upstream and most downstream point (the nose tip and the tail end)."""
+        return float(self.outline[self.tip, 0]), float(self.outline[self.tail, 0])
+
     def cut(self, m: NDArray[np.float64]) -> _Cut:
         x0, y0 = self.outline[:-1, 0], self.outline[:-1, 1]
         x1, y1 = self.outline[1:, 0], self.outline[1:, 1]
@@ -1111,8 +1491,19 @@ class _CurveRow(_Row):
         ends_tau = np.concatenate((self.tau(branches, self.u0), self.tau(branches, self.u1)))
         order = np.argsort(ends_m, kind="stable")
         self.tau_tip, self.tau_tail = float(ends_tau[order[0]]), float(ends_tau[order[-1]])   # nose tip, tail end
+        self.m_tip, self.m_tail = float(ends_m[order[0]]), float(ends_m[order[-1]])
         middle = self.tau(branches, 0.5 * (self.u0 + self.u1))
         self.lower_contour = np.mod(middle - self.tau_tip, self.total) < np.mod(self.tau_tail - self.tau_tip, self.total)
+
+    def surface_of(self, branch: NDArray[np.int64]) -> NDArray[np.str_]:
+        """geometry.py's named surface of each branch: the curve it belongs to."""
+        return np.where(self.curve_of[np.asarray(branch, dtype=np.int64)] == 0, "suction", "pressure")
+
+    @property
+    def extremes(self) -> tuple[float, float]:
+        """m of the blade's most upstream and most downstream point (the nose tip and the tail
+        end): the first and the last branch end in m order."""
+        return self.m_tip, self.m_tail
 
     def tau(self, branch: NDArray[np.int64], u: NDArray[np.float64]) -> NDArray[np.float64]:
         """Contour coordinate of curve parameter u on the given branches: (1 - u) L_s on the
@@ -1383,3 +1774,596 @@ def _whole_number(value: int, name: str, minimum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < minimum:
         raise ValueError(f"{name} must be a whole number of at least {minimum}, got {value!r}")
     return int(value)
+
+
+# --- 9. Geometry-driven standard grids (module docstring, section 9) -------------------
+
+GRID_LEVELS = ("very_coarse", "coarse", "medium", "fine", "very_fine")
+MEDIUM_DM_OVER_CHORD = 0.020                # target dm / chord of "medium"
+LEVEL_REFINEMENT_RATIO = math.sqrt(2.0)     # target dm ratio between neighboring levels (two levels: a factor 2)
+LEVEL_TARGET_DM_OVER_CHORD = MappingProxyType(
+    {name: MEDIUM_DM_OVER_CHORD * LEVEL_REFINEMENT_RATIO ** (2 - k) for k, name in enumerate(GRID_LEVELS)})
+CANDIDATE_BAND = 0.10                       # candidates: dm within +- 10 % of the level's target
+TRANSITION_CLEARANCE = 0.10                 # f - 1, f (l, l + 1) at least this many dm clear of their window
+CELL_ASPECT = 1.8                           # pitch * deta / dm (the project's earlier grids: 1.79 .. 1.83)
+MIN_ETA_CELLS = 6                           # fewer eta cells than this reject a candidate
+NOMINAL_EXTENSION_CHORDS = 1.0              # nominal upstream and downstream extension, chords
+EXTENSION_TOLERANCE_CHORDS = 0.05           # |actual - nominal| extension allowed, chords
+UNIFORM_SPACING_TOLERANCE = 1e-13           # chords: max |m[i + 1] - m[i] - dm| (measured 2.6e-16 .. 5.4e-16 c)
+
+REJECT_LE = "invalid LE cut"
+REJECT_TE = "invalid TE cut"
+REJECT_BRANCH = "wrong branch identity"
+REJECT_EXTENSION = "extension outside tolerance"
+REJECT_ETA = "eta-resolution issue"
+REJECT_OTHER = "other topology failure"
+REJECTION_REASONS = (REJECT_LE, REJECT_TE, REJECT_BRANCH, REJECT_EXTENSION, REJECT_ETA, REJECT_OTHER)
+
+
+@dataclass(frozen=True)
+class PassageTransitions:
+    """The blade ends along m, three kinds kept apart (module docstring, section 9), in the
+    active length unit: the outline's extremes (nose tip, tail end), geometry.py's
+    construction points (LE, TE) and the SS + PS-valid interval (m_start, m_end), the m
+    range in which a station line crosses the reference blade exactly once on the suction
+    and once on the pressure surface. coverage lists every m interval between branch (C1:
+    segment) ends with its suction and pressure crossing counts."""
+
+    m_tip: float
+    m_le: float
+    m_start: float
+    m_end: float
+    m_te: float
+    m_tail: float
+    chord: float
+    coverage: tuple[tuple[float, float, int, int], ...]
+
+    @property
+    def length(self) -> float:
+        """m_end - m_start: the SS + PS-valid interval that the lattice divides into cells."""
+        return self.m_end - self.m_start
+
+    @property
+    def le_window(self) -> float:
+        """m_start - m_tip: no station may lie in (m_tip, m_start], where a line meets the
+        nose but not once on each surface."""
+        return self.m_start - self.m_tip
+
+    @property
+    def te_window(self) -> float:
+        """m_tail - m_end: no station may lie in [m_end, m_tail)."""
+        return self.m_tail - self.m_end
+
+    @property
+    def le_face(self) -> float:
+        """(m_tip + m_start) / 2: the middle of the LE window, where the lattice puts the cell
+        face between f - 1 and f."""
+        return 0.5 * (self.m_tip + self.m_start)
+
+    @property
+    def te_face(self) -> float:
+        """(m_end + m_tail) / 2: the middle of the TE window, the cell face between l and l + 1."""
+        return 0.5 * (self.m_end + self.m_tail)
+
+    @property
+    def lattice_length(self) -> float:
+        """te_face - le_face: the m length the lattice divides into whole cells."""
+        return self.te_face - self.le_face
+
+    def valid_cut(self, m: float) -> bool:
+        """Whether the line x = m crosses the reference blade exactly once on each surface."""
+        return self.m_start < m < self.m_end
+
+
+@dataclass(frozen=True)
+class CandidateRecord:
+    """One candidate spacing tried for a level: n_cells cells of dm across the SS + PS-valid
+    interval; its rank in the search (1: nearest the target); why it was rejected."""
+
+    n_cells: int
+    dm_over_chord: float
+    rank: int
+    accepted: bool
+    reason: str | None                      # one of REJECTION_REASONS, None when accepted
+    detail: str
+
+
+@dataclass(frozen=True)
+class CandidateStatistics:
+    """The search of one level: candidates tested and rejected, the accepted one's rank and
+    the rejection reasons with their counts."""
+
+    target_dm_over_chord: float
+    band: tuple[float, float]               # dm / chord range searched
+    records: tuple[CandidateRecord, ...]
+
+    @property
+    def tested(self) -> int:
+        return len(self.records)
+
+    @property
+    def rejected(self) -> int:
+        return sum(not r.accepted for r in self.records)
+
+    @property
+    def accepted_rank(self) -> int | None:
+        return next((r.rank for r in self.records if r.accepted), None)
+
+    @property
+    def reasons(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for r in self.records:
+            if r.reason is not None:
+                out[r.reason] = out.get(r.reason, 0) + 1
+        return out
+
+
+@dataclass(frozen=True)
+class StandardGridInfo:
+    """What a standard grid is (module docstring, section 9): lengths in chords, points (m, y)
+    in the active unit on the reference blade (the pressure-side wall node moved back one
+    pitch), x / c along geometry.py's chord from the LE point."""
+
+    level: str
+    geometry_id: str
+    target_dm_over_chord: float
+    n_blade_cells: int                      # cells of dm across the SS + PS-valid interval
+    dm: float
+    dm_over_chord: float
+    deta: float
+    n_m: int
+    n_eta: int
+    total_nodes: int
+    first_blade_i: int
+    last_blade_i: int
+    n_blade_stations: int
+    m_first: float
+    m_last: float
+    first_ss_wall_point: tuple[float, float]
+    first_ps_wall_point: tuple[float, float]
+    last_ss_wall_point: tuple[float, float]
+    last_ps_wall_point: tuple[float, float]
+    first_ss_x_c: float
+    first_ps_x_c: float
+    last_ss_x_c: float
+    last_ps_x_c: float
+    le_gap_over_chord: float                # (m_first - m_start) / c: from the SS + PS-valid LE transition
+    te_gap_over_chord: float                # (m_end - m_last) / c
+    m_first_minus_m_le_over_chord: float    # against geometry.py's LE point
+    m_te_minus_m_last_over_chord: float
+    upstream_extension_chords: float        # m_le - m_in, chords
+    downstream_extension_chords: float      # m_out - m_te, chords
+    cell_aspect: float                      # pitch * deta / dm
+    admissibility: str
+    checks: tuple[str, ...]                 # the invariants verified on the built grid
+
+
+@dataclass(frozen=True)
+class StandardGrid:
+    """A geometry-driven grid of one level: the Grid itself (what the solver takes), what it
+    is, how it was found and how long it took (time.perf_counter seconds)."""
+
+    level: str
+    grid: Grid
+    info: StandardGridInfo
+    candidates: CandidateStatistics
+    timing: Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class GridPackage:
+    """The standard grids of one geometry (all five levels, or those asked for), with the
+    shared geometry interrogation and the family timing."""
+
+    geometry_id: str
+    transitions: PassageTransitions
+    levels: tuple[str, ...]
+    grids: Mapping[str, StandardGrid]
+    timing: Mapping[str, float]             # interrogation, each level's search, total
+
+    def __getitem__(self, level: str) -> StandardGrid:
+        return self.grids[level]
+
+    def __iter__(self):
+        return iter([self.grids[level] for level in self.levels])
+
+    def __len__(self) -> int:
+        return len(self.levels)
+
+    @property
+    def candidates_tested(self) -> int:
+        return sum(g.candidates.tested for g in self)
+
+    @property
+    def candidates_rejected(self) -> int:
+        return sum(g.candidates.rejected for g in self)
+
+
+class GridGenerationError(GridError):
+    """No admissible standard grid for this geometry (module docstring, section 9). level: the
+    level asked for ("family" for the ordering of a package, None for the geometry itself);
+    geometry_id; candidates: every candidate tried, each with why it was rejected; reasons:
+    the rejection reasons with their counts. A structured failure that an optimizer can
+    catch and penalize; no grid is returned."""
+
+    def __init__(self, message: str, *, level: str | None, geometry_id: str | None,
+                 candidates: tuple[CandidateRecord, ...] = (), reasons: Mapping[str, int] | None = None) -> None:
+        super().__init__(message)
+        self.level, self.geometry_id = level, geometry_id
+        self.candidates = tuple(candidates)
+        self.reasons = dict(reasons or {})
+
+
+class _Rejected(Exception):
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason, self.detail = reason, detail
+
+
+@dataclass(frozen=True)
+class _Interrogation:
+    cascade: Cascade
+    row: _Row
+    template: PassageBoundaries
+    transitions: PassageTransitions
+    geometry_id: str
+    seconds: float
+
+
+def geometry_identifier(cascade: Cascade) -> str:
+    """A short fingerprint of the blade row a grid is built for: sha256 of the active
+    surfaces, the C2 curves, pitch, chord, stagger and blade angles (16 hex digits)."""
+    if not isinstance(cascade, Cascade):
+        raise TypeError(f"geometry_identifier takes a Cascade, got {type(cascade).__name__}")
+    a = cascade.active
+    digest = hashlib.sha256()
+    for array in (a.suction_surface, a.pressure_surface, a.periodic_translation,
+                  (a.chord, a.pitch, cascade.kappa_le, cascade.kappa_te, cascade.stagger)):
+        digest.update(np.ascontiguousarray(array, dtype=float).tobytes())
+    curves = cascade.active_curves
+    if curves is not None:
+        for curve in (curves.suction, curves.pressure):
+            digest.update(np.ascontiguousarray(curve.knots, dtype=float).tobytes())
+            digest.update(np.ascontiguousarray(curve.control_points, dtype=float).tobytes())
+            digest.update(str(curve.degree).encode())
+    return digest.hexdigest()[:16]
+
+
+def passage_transitions(cascade: Cascade) -> PassageTransitions:
+    """The blade ends of cascade along m (module docstring, section 9): nose tip, LE point,
+    SS + PS-valid interval, TE point, tail end. Read-only; GridGenerationError when no
+    SS + PS-valid interval holds the middle of the chord or the passage is closed."""
+    return _interrogate(cascade).transitions
+
+
+def build_grid(cascade: Cascade, level: str = "medium", *, inlet_angle: float, exit_angle: float | None = None,
+               extension_chords: tuple[float, float] = (NOMINAL_EXTENSION_CHORDS, NOMINAL_EXTENSION_CHORDS)
+               ) -> StandardGrid:
+    """The geometry-driven standard grid of one level (module docstring, section 9): the
+    candidate spacing nearest the level's target that passes every geometry and topology
+    condition, built once. Angles in radians as for make_grid (exit_angle None: kappa_te);
+    extension_chords the nominal (upstream, downstream) lengths in chords. Raises
+    GridGenerationError when no candidate of the level is admissible (or the passage is
+    closed); never returns a malformed grid. timing["total"] is the whole call."""
+    started = time.perf_counter()
+    level = _level_name(level)
+    interrogation = _interrogate(cascade)
+    out = _build_level(interrogation, level, inlet_angle, exit_angle, extension_chords)
+    timing = dict(out.timing)
+    timing["interrogation"] = interrogation.seconds
+    timing["total"] = time.perf_counter() - started
+    return replace(out, timing=MappingProxyType(timing))
+
+
+def build_grid_family(cascade: Cascade, *, inlet_angle: float, exit_angle: float | None = None,
+                      levels: tuple[str, ...] = GRID_LEVELS,
+                      extension_chords: tuple[float, float] = (NOMINAL_EXTENSION_CHORDS, NOMINAL_EXTENSION_CHORDS)
+                      ) -> GridPackage:
+    """The standard grids of levels (all five by default) of one geometry, from one shared
+    geometry interrogation; each is the grid build_grid gives for its level. Raises
+    GridGenerationError for the first level without an admissible grid, and (level
+    "family") when dm and deta do not both fall strictly from level to level."""
+    started = time.perf_counter()
+    names = tuple(_level_name(level) for level in levels)
+    if not names or len(set(names)) != len(names):
+        raise ValueError(f"levels must name each level once, got {levels!r}")
+    names = tuple(sorted(names, key=GRID_LEVELS.index))
+    interrogation = _interrogate(cascade)
+    grids, timing = {}, {"interrogation": interrogation.seconds}
+    for name in names:
+        grids[name] = _build_level(interrogation, name, inlet_angle, exit_angle, extension_chords)
+        timing[name] = grids[name].timing["search"]
+    for coarse, fine in zip(names[:-1], names[1:]):
+        a, b = grids[coarse].info, grids[fine].info
+        if not (a.dm > b.dm and a.deta > b.deta):
+            raise GridGenerationError(f"levels {coarse} and {fine} are not a refinement: dm / c {a.dm_over_chord:.6g} -> "
+                                      f"{b.dm_over_chord:.6g}, deta {a.deta:.6g} -> {b.deta:.6g}", level="family",
+                                      geometry_id=interrogation.geometry_id)
+    timing["total"] = time.perf_counter() - started
+    return GridPackage(geometry_id=interrogation.geometry_id, transitions=interrogation.transitions, levels=names,
+                       grids=MappingProxyType(grids), timing=MappingProxyType(timing))
+
+
+def validate_standard_grid(grid: Grid, transitions: PassageTransitions | None = None) -> tuple[str, ...]:
+    """The invariants of a standard grid (module docstring, section 9), checked on the built
+    Grid itself: the names of the checks passed, or GridError naming the first that fails.
+    transitions None: read from the grid's own blade."""
+    if not isinstance(grid, Grid):
+        raise TypeError(f"validate_standard_grid takes a Grid, got {type(grid).__name__}")
+    row = _row_of(grid.boundaries)
+    if transitions is None:
+        transitions = _transitions(grid.boundaries, row)
+    try:
+        return _standard_checks(grid, row, transitions, row.cut(grid.m))
+    except _Rejected as error:
+        raise GridError(f"{error.reason}: {error.detail}") from None
+
+
+def _level_name(level: str) -> str:
+    if not isinstance(level, str) or level not in GRID_LEVELS:
+        raise ValueError(f"level must be one of {', '.join(GRID_LEVELS)}, got {level!r}")
+    return level
+
+
+def _interrogate(cascade: Cascade) -> _Interrogation:
+    """What every level shares: the blade row, its transitions and the passage check."""
+    started = time.perf_counter()
+    if not isinstance(cascade, Cascade):
+        raise TypeError(f"the standard grids take a Cascade, got {type(cascade).__name__}")
+    geometry_id = geometry_identifier(cascade)
+    template = make_passage_boundaries(cascade, GridSettings(n_passage=1, n_eta=2), 0.0, 0.0)
+    row = _row_of(template)
+    transitions = _transitions(template, row, geometry_id)
+    try:
+        _check_passage(cascade, template, row)
+    except GridError as error:
+        raise GridGenerationError(f"geometry {geometry_id} could not produce an admissible grid at any level: {error}",
+                                  level=None, geometry_id=geometry_id, reasons={REJECT_OTHER: 1}) from error
+    return _Interrogation(cascade=cascade, row=row, template=template, transitions=transitions, geometry_id=geometry_id,
+                          seconds=time.perf_counter() - started)
+
+
+def _pieces_of(row: _Row) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_]]:
+    """m range [lo, hi) of every monotone piece of the outline (C2 branch, C1 segment) and
+    whether it lies on the suction surface."""
+    if isinstance(row, _CurveRow):
+        return row.lo_m, row.hi_m, row.curve_of == 0
+    x0, x1 = row.outline[:-1, 0], row.outline[1:, 0]
+    return np.minimum(x0, x1), np.maximum(x0, x1), row.on_suction(np.arange(len(x0)))
+
+
+def _transitions(b: PassageBoundaries, row: _Row, geometry_id: str | None = None) -> PassageTransitions:
+    """PassageTransitions from the pieces' m ranges: between consecutive piece ends the
+    crossings per surface are constant (half-open ranges, as the cuts count them)."""
+    lo, hi, suction = _pieces_of(row)
+    ends = np.unique(np.concatenate((lo, hi)))
+    middle = 0.5 * (ends[:-1] + ends[1:])
+    on = (lo[None, :] <= middle[:, None]) & (middle[:, None] < hi[None, :])
+    ss = np.count_nonzero(on & suction[None, :], axis=1)
+    ps = np.count_nonzero(on & ~suction[None, :], axis=1)
+    coverage = tuple((float(a), float(z), int(s), int(p)) for a, z, s, p in zip(ends[:-1], ends[1:], ss, ps))
+    valid = (ss == 1) & (ps == 1)
+    centre = 0.5 * (b.m_le + b.m_te)
+    k = int(np.searchsorted(ends, centre, side="right")) - 1
+    if not (0 <= k < len(valid) and valid[k]):
+        found = coverage[k] if 0 <= k < len(coverage) else None
+        raise GridGenerationError(f"geometry {geometry_id} could not produce an admissible grid at any level: the line "
+                                  f"through the middle of the chord does not cross the blade once on the suction and once "
+                                  f"on the pressure surface ({found}): no SS + PS-valid passage interval",
+                                  level=None, geometry_id=geometry_id, reasons={REJECT_BRANCH: 1})
+    first = last = k
+    while first > 0 and valid[first - 1]:
+        first -= 1
+    while last < len(valid) - 1 and valid[last + 1]:
+        last += 1
+    tip, tail = row.extremes
+    return PassageTransitions(m_tip=float(tip), m_le=b.m_le, m_start=float(ends[first]), m_end=float(ends[last + 1]),
+                              m_te=b.m_te, m_tail=float(tail), chord=b.chord, coverage=coverage)
+
+
+def _build_level(it: _Interrogation, level: str, inlet_angle: float, exit_angle: float | None,
+                 extension_chords: tuple[float, float]) -> StandardGrid:
+    """The candidate search of one level (module docstring, section 9)."""
+    started = time.perf_counter()
+    tr = it.transitions
+    up, down = (_positive_number(value, name) for value, name in
+                zip(extension_chords, ("upstream extension_chords", "downstream extension_chords")))
+    target = LEVEL_TARGET_DM_OVER_CHORD[level] * tr.chord
+    low, high = target * (1.0 - CANDIDATE_BAND), target * (1.0 + CANDIDATE_BAND)
+    length = tr.lattice_length
+    counts = range(max(1, math.ceil(length / high)), math.floor(length / low) + 1)
+    ranked = sorted(counts, key=lambda n: (abs(math.log(length / n / target)), n))
+    records, clock = [], {"intersection": 0.0, "construction": 0.0, "validation": 0.0}
+    band = (low / tr.chord, high / tr.chord)
+    for rank, n_cells in enumerate(ranked, start=1):
+        try:
+            grid, info = _candidate(it, level, n_cells, target, inlet_angle, exit_angle, up, down, clock)
+        except _Rejected as error:
+            records.append(CandidateRecord(n_cells=n_cells, dm_over_chord=length / n_cells / tr.chord, rank=rank,
+                                           accepted=False, reason=error.reason, detail=error.detail))
+            continue
+        records.append(CandidateRecord(n_cells=n_cells, dm_over_chord=info.dm_over_chord, rank=rank, accepted=True,
+                                       reason=None, detail="accepted"))
+        stats = CandidateStatistics(target_dm_over_chord=target / tr.chord, band=band, records=tuple(records))
+        clock["search"] = time.perf_counter() - started
+        return StandardGrid(level=level, grid=grid, info=info, candidates=stats, timing=MappingProxyType(dict(clock)))
+    stats = CandidateStatistics(target_dm_over_chord=target / tr.chord, band=band, records=tuple(records))
+    tried = "; ".join(f"{r.n_cells} cells (dm/c {r.dm_over_chord:.5f}): {r.reason}, {r.detail}" for r in records) or "none"
+    raise GridGenerationError(f"geometry {it.geometry_id} could not produce an admissible {level} grid: target dm/c "
+                              f"{target / tr.chord:.5f}, band {band[0]:.5f} .. {band[1]:.5f}, {len(records)} candidate(s) "
+                              f"tried: {tried}", level=level, geometry_id=it.geometry_id, candidates=tuple(records),
+                              reasons=stats.reasons)
+
+
+def _candidate(it: _Interrogation, level: str, n_cells: int, target: float, inlet_angle: float, exit_angle: float | None,
+               up: float, down: float, clock: dict) -> tuple[Grid, StandardGridInfo]:
+    """One candidate: n_cells cells between the LE and TE faces (the middles of the two
+    windows), stations at the cell centres, whole cells out to about the nominal extensions;
+    _Rejected unless every condition holds."""
+    tr, row, chord = it.transitions, it.row, it.transitions.chord
+    dm = tr.lattice_length / n_cells
+    m_first, m_last = tr.le_face + 0.5 * dm, tr.te_face - 0.5 * dm
+    for reason, edge, window in ((REJECT_LE, "LE", tr.le_window), (REJECT_TE, "TE", tr.te_window)):
+        clearance = 0.5 * (dm - window)          # of the transition stations from the window, on both sides
+        if not clearance >= TRANSITION_CLEARANCE * dm:
+            raise _Rejected(reason, f"the {edge} window {window / chord:.3e} c leaves the stations beside it "
+                                    f"{clearance / chord:.3e} c of clearance, below {TRANSITION_CLEARANCE:g} dm "
+                                    f"({TRANSITION_CLEARANCE * dm / chord:.3e} c): dm must exceed the window "
+                                    f"by {2 * TRANSITION_CLEARANCE:g} dm")
+    k_up = round((m_first - (tr.m_le - up * chord)) / dm)
+    k_down = round(((tr.m_te + down * chord) - m_last) / dm)
+    upstream = (tr.m_le - (m_first - k_up * dm)) / chord
+    downstream = ((m_last + k_down * dm) - tr.m_te) / chord
+    for name, actual, nominal in (("upstream", upstream, up), ("downstream", downstream, down)):
+        if not abs(actual - nominal) <= EXTENSION_TOLERANCE_CHORDS:
+            raise _Rejected(REJECT_EXTENSION, f"{name} extension {actual:.4f} c, nominal {nominal:g} c, tolerance "
+                                              f"{EXTENSION_TOLERANCE_CHORDS:g} c")
+    if k_up < 1 or k_down < 1:
+        raise _Rejected(REJECT_EXTENSION, "an extension holds no whole cell")
+    eta_cells = round(it.template.pitch / (CELL_ASPECT * dm))
+    if eta_cells < MIN_ETA_CELLS:
+        raise _Rejected(REJECT_ETA, f"{eta_cells} eta cells (pitch / ({CELL_ASPECT:g} dm)), fewer than {MIN_ETA_CELLS}")
+    first, last = k_up, k_up + n_cells - 1
+
+    started = time.perf_counter()
+    settings = GridSettings(n_passage=n_cells, n_eta=eta_cells + 1, upstream_extension_chords=upstream,
+                            downstream_extension_chords=downstream)
+    b = make_passage_boundaries(it.cascade, settings, inlet_angle, exit_angle)
+    m = np.linspace(b.m_in, b.m_out, k_up + n_cells + k_down)
+    clock["construction"] += time.perf_counter() - started
+    started = time.perf_counter()
+    cut = row.cut(m)
+    clock["intersection"] += time.perf_counter() - started
+    _classify(row, it.transitions, cut, first, last)
+    started = time.perf_counter()
+    try:
+        grid = _grid_on_stations(b, row, m, eta_cells + 1, cut)
+    except GridError as error:
+        raise _Rejected(REJECT_OTHER, str(error).splitlines()[0]) from None
+    finally:
+        clock["construction"] += time.perf_counter() - started
+    if (grid.first_blade_i, grid.last_blade_i) != (first, last):
+        raise _Rejected(REJECT_OTHER, f"blade run {grid.first_blade_i} .. {grid.last_blade_i}, expected {first} .. {last}")
+    started = time.perf_counter()
+    try:
+        checks = _standard_checks(grid, row, tr, cut)
+    finally:
+        clock["validation"] += time.perf_counter() - started
+    return grid, _info(it, level, grid, n_cells, target, checks)
+
+
+def _crossings(row: _Row, cut: _Cut) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+    """Suction and pressure crossings of every station line of cut."""
+    present = np.arange(cut.segment.shape[1])[None, :] < cut.count[:, None]
+    names = row.surface_of(cut.segment)
+    return (np.count_nonzero(present & (names == "suction"), axis=1),
+            np.count_nonzero(present & (names == "pressure"), axis=1))
+
+
+def _classify(row: _Row, tr: PassageTransitions, cut: _Cut, first: int, last: int) -> None:
+    """_Rejected unless no station before first or after last meets the blade at all and every
+    station first .. last crosses it exactly once on each surface, off the LE and TE points."""
+    count = cut.count
+    ahead = np.flatnonzero(count[:first] > 0)
+    if ahead.size:
+        i = int(ahead[-1])
+        raise _Rejected(REJECT_LE, f"station {i} ahead of the first SS + PS station meets the blade ({int(count[i])} "
+                                   f"crossings) at (m - m_start)/c = {(cut.m[i] - tr.m_start) / tr.chord:+.3e}: the LE "
+                                   f"window is {tr.le_window / tr.chord:.3e} c")
+    behind = np.flatnonzero(count[last + 1:] > 0)
+    if behind.size:
+        i = last + 1 + int(behind[0])
+        raise _Rejected(REJECT_TE, f"station {i} behind the last SS + PS station meets the blade ({int(count[i])} "
+                                   f"crossings) at (m - m_end)/c = {(cut.m[i] - tr.m_end) / tr.chord:+.3e}: the TE window "
+                                   f"is {tr.te_window / tr.chord:.3e} c")
+    ss, ps = _crossings(row, cut)
+    blade = slice(first, last + 1)
+    bad = np.flatnonzero(~((count[blade] == 2) & (ss[blade] == 1) & (ps[blade] == 1)))
+    if bad.size:
+        i = first + int(bad[0])
+        raise _Rejected(REJECT_BRANCH, f"blade station {i} crosses the blade {int(count[i])} times ({int(ss[i])} suction, "
+                                       f"{int(ps[i])} pressure)")
+    m = cut.m[blade]
+    near = np.flatnonzero((np.abs(m - tr.m_le) <= row.touch) | (np.abs(m - tr.m_te) <= row.touch))
+    if near.size:
+        raise _Rejected(REJECT_BRANCH, f"blade station {first + int(near[0])} passes through the LE or TE point")
+
+
+def _standard_checks(grid: Grid, row: _Row, tr: PassageTransitions, cut: _Cut) -> tuple[str, ...]:
+    """The invariants of section 9 on a built Grid; _Rejected at the first that fails."""
+    chord, m, eta = grid.chord, grid.m, grid.eta
+    f, l = grid.first_blade_i, grid.last_blade_i
+    checks = []
+
+    def need(ok: bool, name: str, reason: str, detail: str) -> None:
+        if not ok:
+            raise _Rejected(reason, f"{name}: {detail}")
+        checks.append(name)
+
+    steps = np.diff(m)
+    need(bool(np.all(steps > 0.0)), "distinct stations", REJECT_OTHER, "two stations coincide or run backward")
+    spread = float(max(np.abs(steps - grid.dm)))                 # builtin max: no min/max attribute in grid.py
+    need(spread <= UNIFORM_SPACING_TOLERANCE * chord, "uniform dm", REJECT_OTHER, f"spacing varies by {spread / chord:.3g} c")
+    eta_spread = float(max(np.abs(np.diff(eta) - grid.deta)))
+    need(bool(eta[0] == 0.0 and eta[-1] == 1.0 and eta_spread <= UNIFORM_SPACING_TOLERANCE), "uniform deta", REJECT_OTHER,
+         f"eta spacing varies by {eta_spread:.3g}")
+    need(1 <= f <= l <= len(m) - 2, "f <= l inside the far stations", REJECT_OTHER, f"f = {f}, l = {l}, n_m = {len(m)}")
+    need(not tr.valid_cut(m[f - 1]) and int(cut.count[f - 1]) == 0, "f - 1 outside the blade", REJECT_LE,
+         f"station {f - 1} meets the blade")
+    need(not tr.valid_cut(m[l + 1]) and int(cut.count[l + 1]) == 0, "l + 1 outside the blade", REJECT_TE,
+         f"station {l + 1} meets the blade")
+    need(all(tr.valid_cut(value) for value in m[f:l + 1]), "every blade station inside the SS + PS-valid interval",
+         REJECT_BRANCH, "a blade station lies outside it")
+    ss, ps = _crossings(row, cut)
+    need(bool(np.all((cut.count[f:l + 1] == 2) & (ss[f:l + 1] == 1) & (ps[f:l + 1] == 1))),
+         "one SS + one PS crossing per blade station", REJECT_BRANCH, "a blade station has other crossings")
+    identity = grid.wall_identity
+    lower, upper = set(identity.lower.surface.tolist()), set(identity.upper.surface.tolist())
+    need(len(lower) == 1 and len(upper) == 1 and lower != upper, "wall identity constant", REJECT_BRANCH,
+         f"lower wall on {sorted(lower)}, upper wall on {sorted(upper)}")
+    need(not np.any(identity.lower.hidden) and not np.any(identity.upper.hidden), "no hidden crossings", REJECT_BRANCH,
+         "a wall node hides further crossings of its contour")
+    need(bool(np.all(np.isfinite(grid.nodes))), "finite nodes", REJECT_OTHER, "a node is not finite")
+    width = grid.nodes[:, -1, 1] - grid.nodes[:, 0, 1]
+    need(bool(np.all(width > row.touch)), "positive width", REJECT_OTHER, f"width {float(min(width)) / chord:.3g} c")
+    from potential_flow_solver.metrics import build_metrics        # metrics imports grid: here, not at the top
+    try:
+        metrics = build_metrics(grid)
+    except Exception as error:                                     # any refusal of metrics.py rejects the candidate
+        raise _Rejected(REJECT_OTHER, f"metrics: {type(error).__name__}: {error}") from None
+    need(bool(np.all(np.asarray(metrics.S) > 0.0)), "metrics with positive S", REJECT_OTHER, "S is not positive")
+    return tuple(checks)
+
+
+def _info(it: _Interrogation, level: str, grid: Grid, n_cells: int, target: float,
+          checks: tuple[str, ...]) -> StandardGridInfo:
+    tr, chord, b = it.transitions, it.transitions.chord, grid.boundaries
+    f, l = grid.first_blade_i, grid.last_blade_i
+    shift = np.asarray(b.periodic_translation)
+    identity = grid.wall_identity
+    le, te = np.asarray(b.lower_blade_boundary[0]), np.asarray(b.lower_blade_boundary[-1])
+    axis = te - le
+
+    def points(i: int) -> tuple[tuple[float, float], tuple[float, float]]:
+        lower, upper = grid.nodes[i, 0], grid.nodes[i, -1] - shift
+        ss, ps = (lower, upper) if identity.lower.surface[i - f] == "suction" else (upper, lower)
+        return (float(ss[0]), float(ss[1])), (float(ps[0]), float(ps[1]))
+
+    def x_c(point: tuple[float, float]) -> float:
+        return float(np.dot(np.asarray(point) - le, axis) / np.dot(axis, axis))
+
+    first_ss, first_ps = points(f)
+    last_ss, last_ps = points(l)
+    return StandardGridInfo(
+        level=level, geometry_id=it.geometry_id, target_dm_over_chord=target / chord, n_blade_cells=n_cells,
+        dm=grid.dm, dm_over_chord=grid.dm / chord, deta=grid.deta, n_m=len(grid.m), n_eta=len(grid.eta),
+        total_nodes=len(grid.m) * len(grid.eta), first_blade_i=f, last_blade_i=l, n_blade_stations=l - f + 1,
+        m_first=float(grid.m[f]), m_last=float(grid.m[l]), first_ss_wall_point=first_ss, first_ps_wall_point=first_ps,
+        last_ss_wall_point=last_ss, last_ps_wall_point=last_ps, first_ss_x_c=x_c(first_ss), first_ps_x_c=x_c(first_ps),
+        last_ss_x_c=x_c(last_ss), last_ps_x_c=x_c(last_ps),
+        le_gap_over_chord=(float(grid.m[f]) - tr.m_start) / chord, te_gap_over_chord=(tr.m_end - float(grid.m[l])) / chord,
+        m_first_minus_m_le_over_chord=(float(grid.m[f]) - tr.m_le) / chord,
+        m_te_minus_m_last_over_chord=(tr.m_te - float(grid.m[l])) / chord,
+        upstream_extension_chords=(tr.m_le - float(grid.m[0])) / chord,
+        downstream_extension_chords=(float(grid.m[-1]) - tr.m_te) / chord,
+        cell_aspect=b.pitch * grid.deta / grid.dm, admissibility="admissible", checks=checks)

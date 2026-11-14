@@ -9,7 +9,8 @@ M1 0.65, exit angle kappa_te for the grid, the five standard levels). Script-fir
 src/ changes. The tip-anchored grids are study-local Grid objects built here (tip_grid).
 
     python scripts/sideline_anchoring_study.py phaseA     # tip-anchored side lines, their checks, delta and Delta beta
-    (phaseB: the operator test on the uniform flow; phaseD: side checks; report: later phases)
+    python scripts/sideline_anchoring_study.py phaseB     # the operator on an exact uniform flow, both anchors, gate B
+    (phaseD: side checks; report: later phases)
 
 Production side lines (grid.py section 1, make_passage_boundaries, _inlet_side, _exit_side): beta
 linear in m from kappa_le at the LE point (m_le, y_le) to the inlet flow angle at m_in, y the
@@ -34,6 +35,10 @@ DENSE_U = 200001                        # u samples per curve that bracket the s
 BRENTQ_XTOL = 1e-15                     # brentq's absolute tolerance in u
 CLOSEUP_LEVELS = ("very_coarse", "very_fine")
 CLOSEUP_HALF_WIDTH_CHORDS = 0.09        # figure: half width of the LE / TE windows in m
+GAMMAS_DEG = (20.0, 33.0, 45.0)         # phase B: uniform-flow angles from the meridional direction (transition_study's)
+REPORT_GAMMA_DEG = 33.0                 # phase B: the gamma of the side-by-side, term and attribution tables
+GATE_B_ORDER = -1.5                     # phase B: the plan's gate (order_max of f-1, f, l, l+1 with tip >= this); fixed
+CONSISTENCY_REL = 1e-12                 # phase B: le_point rows against transition_study's phaseB.json (the plan's bound)
 
 # ============================================================
 
@@ -556,6 +561,404 @@ def phaseA() -> None:
     write_lines("phaseA.md")
 
 
+# --- Phase B: the operator on an exact uniform flow, both anchors -------------------------------------------------------
+
+SIDE_CLASSES = ("f-1", "f", "f+1", "l-1", "l", "l+1", "periodic LE row (f-1, J)", "periodic TE row (l+1, J)",
+                "blade near LE (f+2 .. 0.1 c)", "blade near TE (0.1 c .. l-2)", "blade middle", "blade middle, wall-adjacent",
+                "periodic near transitions", "periodic far")
+TRANSITION_STATIONS = ("f-1", "f", "f+1", "l-1", "l", "l+1")
+TERM_COLUMNS = (("C_mm", "C psi_mm"), ("mixed", "-2B psi_me"), ("D_term", "D psi_e"), ("E_term", "E psi_m"),
+                ("full", "full"), ("without_DE", "without D, E"))
+FIGURE_CLASSES = ("f-1", "f", "l", "l+1", "f+1", "l-1", "blade middle", "periodic far")
+
+
+def anchored_grid(level: str, anchor: str):
+    """The level's grid for an anchor: "le_point" the production case.grid, "tip" tip_grid of it."""
+    case = case_of(level)
+    if anchor == "le_point":
+        return case.grid
+    if anchor == "tip":
+        return tip_grid(case.grid, case.cascade)
+    raise ValueError(f"anchor must be one of {ANCHORS}, got {anchor!r}")
+
+
+def manufactured_of(grid) -> tuple:
+    """transition_study.manufactured_case for a given grid: build_metrics, build_boundary_conditions
+    and build_coefficients at rho = 1, mdot' = 1, normalized mode (c_ref None)."""
+    from turbolenza.b2b.boundary_conditions import build_boundary_conditions
+    from turbolenza.b2b.coefficients import build_coefficients
+    from turbolenza.b2b.metrics import build_metrics
+
+    met = build_metrics(grid)
+    bcs = build_boundary_conditions(grid)
+    co = build_coefficients(met, np.ones((len(grid.m), len(grid.eta))), 1.0, c_ref=None)
+    return met, bcs, co
+
+
+def operator_level(grid, gamma: float, manufactured: tuple | None = None) -> dict:
+    """One grid, one gamma: the body of transition_study.operator_study's loop. psi of the uniform
+    flow (ts.uniform_psi), the raw residual split by term (ts.term_split, "expanded"), the class
+    statistics (ts.class_stats), the linearity gap of the split on the interior rows (full minus the
+    sum of ts.SUMMED, the same check as operator_study) and on the periodic-line rows, and the scale
+    max|C| / (length_scale dm)^2. Also returns the full interior field and the coefficients."""
+    met, bcs, co = manufactured_of(grid) if manufactured is None else manufactured
+    psi = ts.uniform_psi(grid, gamma)
+    split = ts.term_split(co, grid, bcs, psi, "expanded")
+    f_ = split["full"][0]
+    s_, m_, d_, e_ = (split[t][0] for t in ts.SUMMED)
+    ok = np.isfinite(f_)
+    gap = float(np.max(np.abs(f_[ok] - (s_[ok] + m_[ok] + d_[ok] + e_[ok])))) if ok.any() else math.nan
+    per = split["full"][1]
+    gap_periodic = max((abs(per[k][1] - sum(split[t][1][k][1] for t in ts.SUMMED)) for k in per), default=math.nan)
+    return dict(stats=ts.class_stats(split, grid), dm_over_c=grid.dm / grid.chord, deta=grid.deta, split_gap=gap,
+                split_gap_periodic=float(gap_periodic), full_max=float(np.nanmax(np.abs(f_))),
+                scale=float(np.nanmax(np.abs(np.asarray(co.C)))) / (co.length_scale * grid.dm) ** 2, full=f_, co=co)
+
+
+def attribution_of(grid, co, full) -> dict:
+    """transition_study.corner_attribution for a given grid and its full raw residual (one gamma):
+    at f-1, f, l, l+1 the row j of largest |residual|, C delta_j / (pitch dm^2) there (dm =
+    co.length_scale * grid.dm) against the residual, and the ratio; the same keys as that function,
+    plus the j, J and delta_j / c."""
+    y = np.asarray(grid.nodes, float)[..., 1]
+    C = np.asarray(co.C)
+    dm = co.length_scale * grid.dm
+    f, l, J = grid.first_blade_i, grid.last_blade_i, len(grid.eta) - 1
+    js = np.arange(1, J)
+    row = dict(dm_over_c=grid.dm / grid.chord)
+    for name, i, across, own in (("f-1", f - 1, f, (f - 1, f - 2, f - 3)), ("f", f, f - 1, (f, f + 1, f + 2)),
+                                 ("l", l, l + 1, (l, l - 1, l - 2)), ("l+1", l + 1, l, (l + 1, l + 2, l + 3))):
+        a, b, c3 = own
+        delta = y[across, js] - (3 * y[a, js] - 3 * y[b, js] + y[c3, js])
+        predicted = C[i, js] * delta / (grid.pitch * dm ** 2)
+        actual = full[i, js]
+        k = int(np.argmax(np.abs(actual)))
+        row[f"{name} delta/c"] = float(np.max(np.abs(delta))) / grid.chord
+        row[f"{name} predicted"] = float(predicted[k])
+        row[f"{name} actual"] = float(actual[k])
+        row[f"{name} ratio"] = float(predicted[k] / actual[k])
+        row[f"{name} j"] = int(js[k])
+        row[f"{name} delta_j/c"] = float(delta[k]) / grid.chord
+    row["J"] = J
+    return row
+
+
+def where_of(grid, full) -> dict:
+    """(i, j) of the largest |full residual| of each transition-station class (ts.row_classes)."""
+    masks = ts.row_classes(grid)
+    f, l, J = grid.first_blade_i, grid.last_blade_i, len(grid.eta) - 1
+    out = {}
+    for cls in TRANSITION_STATIONS:
+        a = np.where(masks[cls], np.abs(full), -1.0)
+        i, j = (int(x) for x in np.unravel_index(int(np.argmax(a)), a.shape))
+        out[cls] = dict(i=i, j=j, J=J, i_minus_f=i - f, l_minus_i=l - i, value=float(full[i, j]),
+                        row="j = 1" if j == 1 else "j = J-1" if j == J - 1 else "interior j")
+    return out
+
+
+def operator_results(anchor: str) -> dict:
+    """{(level, gamma): operator_level(...) without the fields, plus "where"; at REPORT_GAMMA_DEG
+    also the corner "attribution"} for the five levels and GAMMAS_DEG."""
+    results = {}
+    for level in LEVELS:
+        grid = anchored_grid(level, anchor)
+        manufactured = manufactured_of(grid)
+        for gamma in GAMMAS_DEG:
+            r = operator_level(grid, gamma, manufactured)
+            r["where"] = where_of(grid, r["full"])
+            if gamma == REPORT_GAMMA_DEG:
+                r["attribution"] = dict(level=level, **attribution_of(grid, r["co"], r["full"]))
+            del r["full"], r["co"]
+            results[(level, gamma)] = r
+    return results
+
+
+def operator_rows(results: dict, anchor: str) -> list:
+    """The rows of transition_study.report_operator (max and RMS per class x term x gamma x level,
+    order_max by ts.power_law, order_last fine -> very_fine, where_very_fine), without its printing,
+    plus the anchor and the power-law order of the RMS. Terms that are exactly zero on a class (A
+    psi_ee, E psi_m on the periodic lines) give log(0) = -inf in ts.power_law, which drops them
+    (its isfinite mask): the divide warning is silenced here, nothing else changes."""
+    with np.errstate(divide="ignore"):
+        return _operator_rows(results, anchor)
+
+
+def _operator_rows(results: dict, anchor: str) -> list:
+    rows = []
+    for gamma in GAMMAS_DEG:
+        dm = [results[(level, gamma)]["dm_over_c"] for level in LEVELS]
+        for cls in ts.CLASS_ORDER:
+            for term in ts.TERMS:
+                maxes = [results[(level, gamma)]["stats"][cls][term]["max"] for level in LEVELS]
+                rmss = [results[(level, gamma)]["stats"][cls][term]["rms"] for level in LEVELS]
+                fit = ts.power_law(dm, maxes)
+                rows.append(dict(anchor=anchor, form="expanded", gamma_deg=gamma, row_class=cls, term=term,
+                                 **{f"max_{level}": v for level, v in zip(LEVELS, maxes)},
+                                 **{f"rms_{level}": v for level, v in zip(LEVELS, rmss)},
+                                 order_max=fit["p"],
+                                 order_last=(math.log(abs(maxes[-2]) / abs(maxes[-1])) / math.log(dm[-2] / dm[-1])
+                                             if maxes[-1] and maxes[-2] and np.isfinite(maxes[-1]) else math.nan),
+                                 order_rms=ts.power_law(dm, rmss)["p"]))
+    for r in rows:
+        r["where_very_fine"] = results[("very_fine", r["gamma_deg"])]["stats"][r["row_class"]][r["term"]]["where"]
+    return rows
+
+
+def _relative(a, b) -> float:
+    """|a - b| / |b|; 0 for two NaNs or two zeros, |a| when b = 0, inf for one NaN."""
+    a, b = float(a), float(b)
+    if math.isnan(a) and math.isnan(b):
+        return 0.0
+    if math.isnan(a) or math.isnan(b):
+        return math.inf
+    if b == 0.0:
+        return abs(a)
+    return abs(a - b) / abs(b)
+
+
+def consistency_check(rows: list) -> dict:
+    """The le_point rows against outputs/transition_study/data/phaseB.json: every max_*, rms_*,
+    order_max and order_last of every class x term x gamma, and the where_very_fine strings."""
+    path = ROOT / ts.OUTPUT_DIR / "data" / "phaseB.json"
+    if not path.exists():
+        return dict(available=False, path=str(path))
+    published = {(r["gamma_deg"], r["row_class"], r["term"]): r for r in json.loads(path.read_text(encoding="utf-8"))["rows"]}
+    keys = [f"max_{level}" for level in LEVELS] + [f"rms_{level}" for level in LEVELS] + ["order_max", "order_last"]
+    worst, where, compared, exact, where_diff = 0.0, None, 0, 0, 0
+    ours = {(r["gamma_deg"], r["row_class"], r["term"]): r for r in rows}
+    for key, p in published.items():
+        r = ours.get(key)
+        if r is None:
+            return dict(available=True, missing=key)
+        for k in keys:
+            d = _relative(r[k], p[k])
+            compared += 1
+            exact += int(d == 0.0)
+            if d > worst:
+                worst, where = d, (key, k)
+        where_diff += int(r["where_very_fine"] != p["where_very_fine"])
+    return dict(available=True, rows=len(published), rows_ours=len(ours), values=compared, bit_identical=exact,
+                max_relative=worst, worst_at=where, where_strings_differing=where_diff,
+                passed=bool(worst <= CONSISTENCY_REL and len(published) == len(ours)))
+
+
+def attribution_control(attribution: list) -> float | None:
+    """le_point attribution against outputs/transition_study/data/phaseC_attribution.json: largest
+    relative difference of its delta/c, predicted, actual and ratio (None when absent)."""
+    path = ROOT / ts.OUTPUT_DIR / "data" / "phaseC_attribution.json"
+    if not path.exists():
+        return None
+    published = {r["level"]: r for r in json.loads(path.read_text(encoding="utf-8"))}
+    return max(_relative(a[f"{k} {field}"], published[a["level"]][f"{k} {field}"]) for a in attribution for k in ROWS
+               for field in ("delta/c", "predicted", "actual", "ratio"))
+
+
+def _cell(value: float, order: float) -> str:
+    return f"{value:.4g} ({order:+.2f})"
+
+
+def phaseB() -> None:
+    say("## Phase B: the operator on an exact uniform flow, both anchors (no BCs, no Kutta, no solve)")
+    say()
+    say("psi = (y - m tan(gamma)) / pitch at the nodes (transition_study.uniform_psi), rho = 1, mdot' = 1, normalized "
+        "mode, gamma = " + ", ".join(f"{g:g}" for g in GAMMAS_DEG) + " deg. Residual = the raw left side of each "
+        "production PDE row (transition_study.term_split, 'expanded'), row classes and statistics of "
+        "transition_study.row_classes / class_stats, orders by transition_study.power_law (|x| = a dm^p, p > 0 decays). "
+        "le_point = case.grid (production side lines); tip = tip_grid(case.grid) (phase A). Five levels.")
+    say()
+    results = {"le_point": operator_results("le_point")}
+    rows = {"le_point": operator_rows(results["le_point"], "le_point")}
+    check = consistency_check(rows["le_point"])
+    if not check.get("available"):
+        say(f"CONSISTENCY CHECK NOT POSSIBLE: {check['path']} is absent. Stopped.")
+        write_lines("phaseB.md")
+        raise SystemExit(1)
+    say(f"**Consistency check (before anything else):** the le_point rows against "
+        f"outputs/transition_study/data/phaseB.json: {check.get('rows')} rows (ours {check.get('rows_ours')}), "
+        f"{check.get('values')} values (max_*, rms_*, order_max, order_last), {check.get('bit_identical')} bit-identical, "
+        f"largest relative difference {check.get('max_relative', math.nan):.3e} (at {check.get('worst_at')}); "
+        f"where_very_fine strings differing: {check.get('where_strings_differing')}. Bound {CONSISTENCY_REL:g}: "
+        f"{'PASSED' if check.get('passed') else 'FAILED'}.")
+    say()
+    if not check.get("passed"):
+        say("Stopped: the le_point operator rows do not reproduce the transition study.")
+        save("phaseB.json", dict(consistency=check))
+        write_lines("phaseB.md")
+        raise SystemExit(1)
+    results["tip"] = operator_results("tip")
+    rows["tip"] = operator_rows(results["tip"], "tip")
+    by = {(r["anchor"], r["gamma_deg"], r["row_class"], r["term"]): r for a in ANCHORS for r in rows[a]}
+    gaps = {a: max(r["split_gap"] for r in results[a].values()) for a in ANCHORS}
+    gaps_per = {a: max(r["split_gap_periodic"] for r in results[a].values()) for a in ANCHORS}
+    full_max = {a: max(r["full_max"] for r in results[a].values()) for a in ANCHORS}
+    for a in ANCHORS:
+        say(f"Linearity check of the term split ({a}): full - (second + mixed + D + E), largest over the interior rows, "
+            f"levels and gammas {gaps[a]:.2e}, over the periodic-line rows {gaps_per[a]:.2e} (raw units; the full "
+            f"residuals reach {full_max[a]:.4g}).")
+    say()
+    g0 = REPORT_GAMMA_DEG
+    # (1) the side-by-side tables
+    for a in ANCHORS:
+        sel = [by[(a, g0, cls, "full")] for cls in SIDE_CLASSES]
+        table(sel, [("row_class", "row class")] + [(f"max_{level}", level) for level in LEVELS]
+              + [("order_max", "order (fit)"), ("order_last", "order f->vf"), ("order_rms", "RMS order (fit)"),
+                 ("where_very_fine", "max at (very_fine)")],
+              f"(1) {a}: max |raw residual| of the full row, gamma = {g0:g} deg", digits=3)
+    side = []
+    for cls in SIDE_CLASSES:
+        le, tp = by[("le_point", g0, cls, "full")], by[("tip", g0, cls, "full")]
+        side.append(dict(row_class=cls, le_vc=le["max_very_coarse"], tip_vc=tp["max_very_coarse"],
+                         le_vf=le["max_very_fine"], tip_vf=tp["max_very_fine"], le_order=le["order_max"],
+                         tip_order=tp["order_max"], order_change=tp["order_max"] - le["order_max"],
+                         le_rms_order=le["order_rms"], tip_rms_order=tp["order_rms"]))
+    table(side, [("row_class", "row class"), ("le_vc", "le_point vc"), ("tip_vc", "tip vc"), ("le_vf", "le_point vf"),
+                 ("tip_vf", "tip vf"), ("le_order", "le_point order"), ("tip_order", "tip order"),
+                 ("order_change", "tip - le_point"), ("le_rms_order", "le_point RMS order"),
+                 ("tip_rms_order", "tip RMS order")],
+          f"(1) side by side, gamma = {g0:g} deg (max |raw residual|; orders by the five-level fit)", digits=3)
+    # (2) the term tables
+    term_rows = []
+    for a in ANCHORS:
+        cells = []
+        for cls in TRANSITION_STATIONS:
+            cell = dict(row_class=cls)
+            for term, _ in TERM_COLUMNS:
+                r = by[(a, g0, cls, term)]
+                cell[term] = _cell(r["max_very_fine"], r["order_max"])
+            cells.append(cell)
+        table(cells, [("row_class", "row class")] + list(TERM_COLUMNS),
+              f"(2) {a}: terms at the transition stations, max |.| on very_fine, gamma = {g0:g} deg (order by the "
+              f"five-level fit in brackets)")
+    for a in ANCHORS:
+        for gamma in GAMMAS_DEG:
+            for cls in TRANSITION_STATIONS:
+                for term, name in TERM_COLUMNS:
+                    r = by[(a, gamma, cls, term)]
+                    term_rows.append(dict(anchor=a, gamma_deg=gamma, row_class=cls, term=term, term_name=name,
+                                          **{f"max_{level}": r[f"max_{level}"] for level in LEVELS},
+                                          order_max=r["order_max"], order_last=r["order_last"]))
+    # (3) the delta attribution
+    attribution = {a: [results[a][(level, g0)]["attribution"] for level in LEVELS] for a in ANCHORS}
+    att_rows = []
+    for a in ("tip", "le_point"):
+        long = []
+        for r in attribution[a]:
+            for k in ROWS:
+                long.append(dict(anchor=a, level=r["level"], dm_over_c=r["dm_over_c"], row=k, delta_max=r[f"{k} delta/c"],
+                                 j=r[f"{k} j"], J=r["J"], delta_j=r[f"{k} delta_j/c"], predicted=r[f"{k} predicted"],
+                                 actual=r[f"{k} actual"], ratio=r[f"{k} ratio"]))
+        att_rows += long
+        table(long, [("level", "level"), ("row", "row"), ("delta_max", "max |delta|/c"), ("j", "j of max |residual|"),
+                     ("J", "J"), ("delta_j", "delta_j/c"), ("predicted", "C delta_j/(s dm^2)"), ("actual", "residual"),
+                     ("ratio", "ratio")],
+              f"(3) {a}: the eta-line corner against the residual at each transition row's j of largest |residual| "
+              f"(gamma = {g0:g} deg)", digits=4)
+    control = attribution_control(attribution["le_point"])
+    say("le_point attribution against outputs/transition_study/data/phaseC_attribution.json (delta/c, predicted, actual, "
+        "ratio): " + ("absent, not compared." if control is None else f"largest relative difference {control:.3e}."))
+    say()
+    # (4) where the transition-class maxima sit on very_fine
+    where_rows = []
+    for gamma in GAMMAS_DEG:
+        for a in ANCHORS:
+            w = results[a][("very_fine", gamma)]["where"]
+            for cls in TRANSITION_STATIONS:
+                where_rows.append(dict(gamma_deg=gamma, anchor=a, row_class=cls, **w[cls]))
+    table([r for r in where_rows if r["gamma_deg"] == g0], [("anchor", "anchor"), ("row_class", "row class"), ("i", "i"),
+                                                            ("j", "j"), ("J", "J"), ("row", "row"), ("i_minus_f", "i - f"),
+                                                            ("l_minus_i", "l - i"), ("value", "residual")],
+          f"(4) Where the max |full residual| of each transition class sits on very_fine (gamma = {g0:g} deg)", digits=4)
+    at_g0 = {(r["anchor"], r["row_class"]): (r["i"], r["j"]) for r in where_rows if r["gamma_deg"] == g0}
+    moved = [r for r in where_rows if r["gamma_deg"] != g0 and (r["i"], r["j"]) != at_g0[(r["anchor"], r["row_class"])]]
+    say(f"At gamma {', '.join(f'{g:g}' for g in GAMMAS_DEG if g != g0)} deg the maxima sit at the same (i, j) as at "
+        f"{g0:g} deg, except: " + ("; ".join(f"{r['anchor']} {r['row_class']} ({r['i']}, {r['j']}) at {r['gamma_deg']:g}"
+                                            for r in moved) if moved else "none") + ".")
+    say()
+    # (6) gate B
+    gate_rows = []
+    for a in ("tip", "le_point"):
+        for gamma in GAMMAS_DEG:
+            for cls in ROWS:
+                p = by[(a, gamma, cls, "full")]["order_max"]
+                gate_rows.append(dict(anchor=a, gamma_deg=gamma, row_class=cls, order_max=p, at_least_gate=bool(p >= GATE_B_ORDER),
+                                      in_gate=a == "tip", in_le_only_reading=a == "tip" and cls in ("f-1", "f")))
+    tip_gate = [r for r in gate_rows if r["in_gate"]]
+    le_only = [r for r in gate_rows if r["in_le_only_reading"]]
+    gate_pass = all(r["order_max"] >= GATE_B_ORDER for r in tip_gate)
+    le_only_pass = all(r["order_max"] >= GATE_B_ORDER for r in le_only)
+    say(f"### Gate B (the plan, read as written): order_max of max |raw residual| (five-level power-law fit) of f-1, f, "
+        f"l and l+1, at gamma = {', '.join(f'{g:g}' for g in GAMMAS_DEG)} deg, all twelve with tip, must be >= "
+        f"{GATE_B_ORDER:g}")
+    say()
+    say("| gamma | f-1 | f | l | l+1 |")
+    say("|---|---|---|---|---|")
+    for gamma in GAMMAS_DEG:
+        say(f"| {gamma:g} | " + " | ".join(f"{by[('tip', gamma, cls, 'full')]['order_max']:.3f}" for cls in ROWS) + " |")
+    say()
+    say(f"GATE B: {'PASS' if gate_pass else 'FAIL'} (all twelve >= {GATE_B_ORDER:g}: {gate_pass}; the largest "
+        f"{max(r['order_max'] for r in tip_gate):.3f}, the smallest {min(r['order_max'] for r in tip_gate):.3f}; "
+        f"{sum(r['at_least_gate'] for r in tip_gate)} of 12 at or above).")
+    say()
+    say(f"LE-only reading (f-1, f; NOT the gate): " + ", ".join(
+        f"{r['row_class']} @ {r['gamma_deg']:g}: {r['order_max']:.3f}" for r in le_only)
+        + f" -> all >= {GATE_B_ORDER:g}: {le_only_pass}.")
+    say()
+    say("For reference, le_point (production) at the same rows: " + "; ".join(
+        f"gamma {gamma:g}: " + ", ".join(f"{by[('le_point', gamma, cls, 'full')]['order_max']:.3f}" for cls in ROWS)
+        for gamma in GAMMAS_DEG) + " (f-1, f, l, l+1).")
+    say()
+    # (5) the figure
+    residual_figure(by, OUT / "residual_by_class_vs_dm.png")
+    say("Figure: residual_by_class_vs_dm.png (max |raw residual| against dm, gamma 33 deg; le_point solid, tip dashed; "
+        "reference slopes dm^-1.5 and dm^-2).")
+    say()
+    write_csv("phaseB_operator_residuals.csv", rows["le_point"] + rows["tip"])
+    write_csv("phaseB_terms.csv", term_rows)
+    write_csv("phaseB_corner_attribution.csv", att_rows)
+    write_csv("phaseB_gate.csv", gate_rows)
+    save("phaseB.json", dict(consistency=check, rows=rows["le_point"] + rows["tip"], side_by_side=side, terms=term_rows,
+                             attribution=attribution, attribution_control=control, where=where_rows, gate=gate_rows,
+                             gate_pass=gate_pass, le_only_pass=le_only_pass, split_gap=gaps, split_gap_periodic=gaps_per,
+                             full_max=full_max, settings=dict(GAMMAS_DEG=GAMMAS_DEG, REPORT_GAMMA_DEG=REPORT_GAMMA_DEG,
+                                                              GATE_B_ORDER=GATE_B_ORDER, CONSISTENCY_REL=CONSISTENCY_REL,
+                                                              LEVELS=LEVELS)))
+    write_lines("phaseB.md")
+
+
+def residual_figure(by: dict, path: Path) -> None:
+    """max |raw residual| against dm (log-log), gamma REPORT_GAMMA_DEG, FIGURE_CLASSES: le_point solid,
+    tip dashed, with dm^-1.5 and dm^-2 reference slopes."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    g0 = REPORT_GAMMA_DEG
+    dm = np.array([case_of(level).grid.dm / case_of(level).grid.chord for level in LEVELS])
+    colours = ks.SERIES + ("#6250d6", "#e34948", ks.INK)
+    fig, ax = plt.subplots(figsize=(9.4, 5.8), facecolor=ks.SURFACE)
+    ks.style(ax, f"Phase B: max |raw residual| on the uniform flow (gamma {g0:g} deg); solid le_point, dashed tip")
+    for k, cls in enumerate(FIGURE_CLASSES):
+        for a, dashed in (("le_point", False), ("tip", True)):
+            r = by[(a, g0, cls, "full")]
+            ax.loglog(dm, [r[f"max_{level}"] for level in LEVELS], color=colours[k], linestyle="--" if dashed else "-",
+                      linewidth=1.4 if dashed else 2.0, marker=ks.MARKS[k % len(ks.MARKS)], markersize=5,
+                      markerfacecolor=ks.SURFACE if dashed else colours[k],
+                      label=f"{cls}  (le_point p = {by[('le_point', g0, cls, 'full')]['order_max']:.2f}, "
+                            f"tip p = {by[('tip', g0, cls, 'full')]['order_max']:.2f})" if not dashed else None)
+    top = by[("le_point", g0, "f-1", "full")]["max_very_coarse"]
+    for p, style in ((-1.5, ":"), (-2.0, "-.")):
+        ax.loglog(dm, 0.3 * top * (dm / dm[0]) ** p, color=ks.MUTED, linewidth=1.0, linestyle=style,
+                  label=f"slope dm^{p:g} (reference)")
+    ax.set_xlabel("dm / c")
+    ax.set_ylabel("max |raw residual|")
+    ax.invert_xaxis()
+    ax.legend(fontsize=6.8, frameon=False, labelcolor=ks.INK2, loc="center left", bbox_to_anchor=(1.0, 0.5))
+    fig.tight_layout()
+    fig.savefig(path, dpi=150, facecolor=ks.SURFACE)
+    plt.close(fig)
+
+
 # --- the figure -------------------------------------------------------------------------------------------------------
 
 def closeup_figure(path: Path) -> None:
@@ -632,7 +1035,7 @@ def closeup_figure(path: Path) -> None:
 
 # ------------------------------------------------------------------------------------------------------------------------
 
-PHASES = {"phaseA": phaseA}           # phaseB, phaseD and report: later phases of the plan
+PHASES = {"phaseA": phaseA, "phaseB": phaseB}          # phaseD and report: later phases of the plan
 
 
 class _Tee:

@@ -34,8 +34,21 @@ very_coarse level, and very_fine for the published delta values (about 0.5 s per
     bit), and they moved (0.0156 c at f-1 on very_coarse, measured; bound 1e-3 c); its boundary
     samples end exactly on the tip / tail end at kappa_le / kappa_te; build_metrics builds on it.
 
-Seeded mutation (2026-11-14, run once and reverted; recorded in the phase A report): in
-anchored_side, the inlet junction y at the tip but its m left at m_le. Tests (b) and (c) fail.
+Phase B (the operator on the exact uniform flow psi = (y - m tan gamma) / pitch, rho = 1, mdot' = 1):
+(f) le_point, very_coarse, gamma 33 deg: max |raw residual| of f-1, f, l, l+1 is the transition
+    study's published phase B table (outputs/transition_study/report.md: 19.5, 18.3, 5.15, 4.67;
+    hard-coded), tolerance half a unit of the printed last digit (0.05, 0.05, 0.005, 0.005):
+    measured 19.5354, 18.2937, 5.1464, 4.6656 (differences 0.035, 0.0063, 0.0036, 0.0044).
+(g) tip, very_coarse, gamma 20, 33, 45 deg: the raw residual is finite at every interior row and
+    every row class, and the term split adds up to the full residual: tolerance 1e-12 (raw units)
+    on the interior and the periodic-line rows, measured 2.1e-13 and 2.3e-13 (the full residual
+    reaches 11.3 there; 8.8e-12 over all five levels, residuals to 136).
+
+Seeded mutations (2026-11-14, each run once and reverted; recorded in the phase reports): phase A,
+in anchored_side, the inlet junction y at the tip but its m left at m_le: (b) and (c) fail. Phase
+B, in operator_level, psi built with the wrong sign of the m term, (y + m tan gamma) / pitch: (f)
+fails (f-1 18.61 against 19.5; f 18.40, l 4.970, l+1 4.966 are outside their tolerances too), the
+others pass.
 """
 
 from __future__ import annotations
@@ -63,6 +76,13 @@ PUBLISHED_DELTA = {         # (d) outputs/transition_study/report.md, phase C ta
     "very_fine": (0.0310, 0.0196, 0.0071, 0.0083),
 }
 TOL_PUBLISHED = 5e-5        # (d) half a unit of the fourth decimal: measured 4.85e-5 at most
+PUBLISHED_RESIDUAL = {      # (f) report.md phase B table, very_coarse, gamma 33: (printed value, half its last digit)
+    "f-1": (19.5, 0.05),    # measured 19.5354
+    "f": (18.3, 0.05),      # measured 18.2937
+    "l": (5.15, 0.005),     # measured 5.1464
+    "l+1": (4.67, 0.005),   # measured 4.6656
+}
+TOL_SPLIT = 1e-12           # (g) raw units: measured 2.1e-13 (interior rows), 2.3e-13 (periodic-line rows)
 
 
 @pytest.fixture(scope="module")
@@ -181,3 +201,25 @@ def test_the_tip_grid_changes_only_the_periodic_stations(study, very_coarse):
     assert np.array_equal(met.tan_beta0[f:l + 1], build_metrics(grid).tan_beta0[f:l + 1])
     with pytest.raises(gr.GridError):                                           # __post_init__ re-validates
         replace(tg, first_blade_i=f + 1)
+
+
+def test_le_point_operator_residual_is_the_transition_study_table(study):
+    grid = study.case_of("very_coarse").grid
+    stats = study.operator_level(grid, 33.0)["stats"]
+    for row, (published, tolerance) in PUBLISHED_RESIDUAL.items():
+        assert abs(stats[row]["full"]["max"] - published) <= tolerance, (row, stats[row]["full"]["max"])
+
+
+def test_tip_operator_residual_is_finite_and_its_split_adds_up(study, very_coarse):
+    case, ends = very_coarse
+    tg = study.tip_grid(case.grid, case.cascade, ends)
+    manufactured = study.manufactured_of(tg)
+    for gamma in study.GAMMAS_DEG:
+        r = study.operator_level(tg, gamma, manufactured)
+        assert np.all(np.isfinite(r["full"][1:-1, 1:-1]))
+        assert r["split_gap"] <= TOL_SPLIT and r["split_gap_periodic"] <= TOL_SPLIT, (gamma, r["split_gap"],
+                                                                                        r["split_gap_periodic"])
+        for row_class, terms in r["stats"].items():
+            assert terms["full"]["n"] > 0 and np.isfinite(terms["full"]["max"]), (gamma, row_class)
+        for row in ("f-1", "f", "l", "l+1"):
+            assert r["stats"][row]["full"]["max"] > 0.0

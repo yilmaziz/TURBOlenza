@@ -44,11 +44,20 @@ Phase B (the operator on the exact uniform flow psi = (y - m tan gamma) / pitch,
     on the interior and the periodic-line rows, measured 2.1e-13 and 2.3e-13 (the full residual
     reaches 11.3 there; 8.8e-12 over all five levels, residuals to 136).
 
+Phase D (side checks):
+(h) side_line_exact, the closed form of the side line that D2 compares the discrete ingredients with,
+    at the very_coarse inlet stations, both anchors: its y0 is the grid's lower side-line node
+    (tolerance 2e-14 c, measured 4.0e-15); central differences of its own y0 and tan(beta) at
+    h = 0.05 c reproduce its tan(beta) and d tan(beta)/dm (tolerances 1e-5, 1e-6 and 2e-6: measured
+    6.2e-6, 7.3e-7 and 1.45e-6) and are second order: halving h divides each error by 4.0000
+    (bound 3.9 .. 4.1).
+
 Seeded mutations (2026-11-14, each run once and reverted; recorded in the phase reports): phase A,
 in anchored_side, the inlet junction y at the tip but its m left at m_le: (b) and (c) fail. Phase
 B, in operator_level, psi built with the wrong sign of the m term, (y + m tan gamma) / pitch: (f)
 fails (f-1 18.61 against 19.5; f 18.40, l 4.970, l+1 4.966 are outside their tolerances too), the
-others pass.
+others pass. Phase D, in side_line_exact, d tan(beta)/dm with the wrong sign of dbeta/dm: (h) fails for
+both anchors (d tan/dm from y0 off by 0.244), the others pass.
 """
 
 from __future__ import annotations
@@ -83,6 +92,9 @@ PUBLISHED_RESIDUAL = {      # (f) report.md phase B table, very_coarse, gamma 33
     "l+1": (4.67, 0.005),   # measured 4.6656
 }
 TOL_SPLIT = 1e-12           # (g) raw units: measured 2.1e-13 (interior rows), 2.3e-13 (periodic-line rows)
+FD_STEP = 0.05              # (h) chords
+TOL_Y0_CLOSED = 2e-14       # (h) chords: measured 4.0e-15 (le_point), 3.3e-15 (tip)
+TOL_FD = (1e-5, 1e-6, 2e-6)  # (h) tan from y0, dtan from y0, dtan from tan at FD_STEP: measured 6.2e-6, 7.3e-7, 1.45e-6
 
 
 @pytest.fixture(scope="module")
@@ -223,3 +235,23 @@ def test_tip_operator_residual_is_finite_and_its_split_adds_up(study, very_coars
             assert terms["full"]["n"] > 0 and np.isfinite(terms["full"]["max"]), (gamma, row_class)
         for row in ("f-1", "f", "l", "l+1"):
             assert r["stats"][row]["full"]["max"] > 0.0
+
+
+@pytest.mark.parametrize("anchor", ["le_point", "tip"])
+def test_side_line_closed_form_against_finite_differences(study, anchor):
+    case = study.case_of("very_coarse")
+    grid = study.anchored_grid("very_coarse", anchor)
+    f = grid.first_blade_i
+    m = np.asarray(grid.m)[:f]
+    args = study.side_junctions(grid, case.cascade, anchor)["inlet"]
+    exact = study.side_line_exact(*args, m)
+    assert np.max(np.abs(exact["y"] - np.asarray(grid.nodes)[:f, 0, 1])) / grid.chord <= TOL_Y0_CLOSED
+    errors = []
+    for h in (FD_STEP, FD_STEP / 2):
+        plus, minus = study.side_line_exact(*args, m + h), study.side_line_exact(*args, m - h)
+        errors.append((np.max(np.abs((plus["y"] - minus["y"]) / (2 * h) - exact["tan"])),
+                       np.max(np.abs((plus["y"] - 2 * exact["y"] + minus["y"]) / h ** 2 - exact["dtan"])),
+                       np.max(np.abs((plus["tan"] - minus["tan"]) / (2 * h) - exact["dtan"]))))
+    for k, tolerance in enumerate(TOL_FD):
+        assert errors[0][k] <= tolerance, (k, errors[0][k])
+        assert 3.9 <= errors[0][k] / errors[1][k] <= 4.1, (k, errors[0][k] / errors[1][k])

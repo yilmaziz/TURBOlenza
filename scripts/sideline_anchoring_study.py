@@ -10,7 +10,8 @@ src/ changes. The tip-anchored grids are study-local Grid objects built here (ti
 
     python scripts/sideline_anchoring_study.py phaseA     # tip-anchored side lines, their checks, delta and Delta beta
     python scripts/sideline_anchoring_study.py phaseB     # the operator on an exact uniform flow, both anchors, gate B
-    (phaseD: side checks; report: later phases)
+    python scripts/sideline_anchoring_study.py phaseD     # side checks: curvature joints; the first-order periodic term
+    (report: a later step)
 
 Production side lines (grid.py section 1, make_passage_boundaries, _inlet_side, _exit_side): beta
 linear in m from kappa_le at the LE point (m_le, y_le) to the inlet flow angle at m_in, y the
@@ -39,6 +40,12 @@ GAMMAS_DEG = (20.0, 33.0, 45.0)         # phase B: uniform-flow angles from the 
 REPORT_GAMMA_DEG = 33.0                 # phase B: the gamma of the side-by-side, term and attribution tables
 GATE_B_ORDER = -1.5                     # phase B: the plan's gate (order_max of f-1, f, l, l+1 with tip >= this); fixed
 CONSISTENCY_REL = 1e-12                 # phase B: le_point rows against transition_study's phaseB.json (the plan's bound)
+GEOMETRY_LEVEL = "medium"               # phase D1: the cascade (the geometry does not depend on the level)
+JOINT_STEP_U = 1e-9                     # phase D1: one-sided values at u -+ this
+DENSE_CURVE_U = 40001                   # phase D1: u samples per curve (figure, arc length, the derivative self-check)
+X_C_MARKS = (0.64, 0.66)                # phase D1: the x/c of the brief
+D2_GAMMA_DEG = 33.0                     # phase D2: the uniform-flow angle
+STOKES_CSV = "outputs/kutta_study/stokes_check.csv"     # phase D1: where "x/c 0.66" was looked for
 
 # ============================================================
 
@@ -595,12 +602,13 @@ def manufactured_of(grid) -> tuple:
     return met, bcs, co
 
 
-def operator_level(grid, gamma: float, manufactured: tuple | None = None) -> dict:
+def operator_level(grid, gamma: float, manufactured: tuple | None = None, keep_split: bool = False) -> dict:
     """One grid, one gamma: the body of transition_study.operator_study's loop. psi of the uniform
     flow (ts.uniform_psi), the raw residual split by term (ts.term_split, "expanded"), the class
     statistics (ts.class_stats), the linearity gap of the split on the interior rows (full minus the
     sum of ts.SUMMED, the same check as operator_study) and on the periodic-line rows, and the scale
-    max|C| / (length_scale dm)^2. Also returns the full interior field and the coefficients."""
+    max|C| / (length_scale dm)^2. Also returns the full interior field and the coefficients, and
+    with keep_split the whole term split (phase D)."""
     met, bcs, co = manufactured_of(grid) if manufactured is None else manufactured
     psi = ts.uniform_psi(grid, gamma)
     split = ts.term_split(co, grid, bcs, psi, "expanded")
@@ -610,9 +618,12 @@ def operator_level(grid, gamma: float, manufactured: tuple | None = None) -> dic
     gap = float(np.max(np.abs(f_[ok] - (s_[ok] + m_[ok] + d_[ok] + e_[ok])))) if ok.any() else math.nan
     per = split["full"][1]
     gap_periodic = max((abs(per[k][1] - sum(split[t][1][k][1] for t in ts.SUMMED)) for k in per), default=math.nan)
-    return dict(stats=ts.class_stats(split, grid), dm_over_c=grid.dm / grid.chord, deta=grid.deta, split_gap=gap,
-                split_gap_periodic=float(gap_periodic), full_max=float(np.nanmax(np.abs(f_))),
-                scale=float(np.nanmax(np.abs(np.asarray(co.C)))) / (co.length_scale * grid.dm) ** 2, full=f_, co=co)
+    out = dict(stats=ts.class_stats(split, grid), dm_over_c=grid.dm / grid.chord, deta=grid.deta, split_gap=gap,
+               split_gap_periodic=float(gap_periodic), full_max=float(np.nanmax(np.abs(f_))),
+               scale=float(np.nanmax(np.abs(np.asarray(co.C)))) / (co.length_scale * grid.dm) ** 2, full=f_, co=co)
+    if keep_split:
+        out["split"] = split
+    return out
 
 
 def attribution_of(grid, co, full) -> dict:
@@ -959,6 +970,672 @@ def residual_figure(by: dict, path: Path) -> None:
     plt.close(fig)
 
 
+# --- Phase D1: curvature along the C2 surfaces and the construction joints -----------------------------------------------
+
+def chordwise_of(cascade, points) -> np.ndarray:
+    """x/c of points of the reference blade: their projection on the chord axis LE -> TE (as
+    kutta_study.chordwise, from cascade.active's LE and TE points)."""
+    le = np.asarray(cascade.active.leading_edge_point, float)
+    te = np.asarray(cascade.active.trailing_edge_point, float)
+    axis = te - le
+    return (np.atleast_2d(np.asarray(points, float)) - le) @ axis / float(axis @ axis)
+
+
+def curvature_derivatives(d1, d2, d3, d4) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """kappa, dkappa/ds and d2kappa/ds2 of X(u) from its exact u derivatives X' .. X'''' (no
+    differencing): with N = X' x X'', P = X'.X'', v = |X'|,
+        kappa = N / v^3,  kappa_u = N_u / v^3 - 3 N P / v^5,
+        kappa_uu = N_uu / v^3 - (6 N_u P + 3 N P_u) / v^5 + 15 N P^2 / v^7,
+        kappa_s = kappa_u / v,  kappa_ss = kappa_uu / v^2 - kappa_u P / v^4,
+    N_u = X' x X''', N_uu = X'' x X''' + X' x X'''', P_u = X''.X'' + X'.X'''. kappa has the sign of
+    geometry.signed_curvature."""
+    d1, d2, d3, d4 = (np.asarray(a, float) for a in (d1, d2, d3, d4))
+
+    def cross(a, b):
+        return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+
+    def dot(a, b):
+        return a[..., 0] * b[..., 0] + a[..., 1] * b[..., 1]
+
+    v = np.hypot(d1[..., 0], d1[..., 1])
+    N, N_u, N_uu = cross(d1, d2), cross(d1, d3), cross(d2, d3) + cross(d1, d4)
+    P, P_u = dot(d1, d2), dot(d2, d2) + dot(d1, d3)
+    kappa = N / v ** 3
+    kappa_u = N_u / v ** 3 - 3.0 * N * P / v ** 5
+    kappa_uu = N_uu / v ** 3 - (6.0 * N_u * P + 3.0 * N * P_u) / v ** 5 + 15.0 * N * P ** 2 / v ** 7
+    return kappa, kappa_u / v, kappa_uu / v ** 2 - kappa_u * P / v ** 4
+
+
+def curve_curvature(curve, u) -> dict:
+    """kappa, kappa_s, kappa_ss, the point and |X'| of a ParametricBladeCurve at u (its own
+    derivatives, orders 1 to 4)."""
+    u = np.atleast_1d(np.asarray(u, float))
+    d = [np.asarray(curve.derivative(u, k), float) for k in range(5)]
+    kappa, kappa_s, kappa_ss = curvature_derivatives(d[1], d[2], d[3], d[4])
+    return dict(point=d[0], speed=np.hypot(d[1][:, 0], d[1][:, 1]), kappa=kappa, kappa_s=kappa_s, kappa_ss=kappa_ss)
+
+
+def _piece_values(pps, u: float, interval: int) -> list:
+    """X^(n)(u), n = 1 .. 5, from one polynomial piece of the two coordinate PPolys."""
+    out = []
+    for n in range(1, 6):
+        out.append(np.array([np.polyval(np.polyder(pp.c[:, interval], n), u - pp.x[interval]) for pp in pps]))
+    return out
+
+
+def knot_jumps(curve, u_knot: float, pps) -> dict:
+    """Jumps (right minus left polynomial piece, evaluated exactly at the knot) of kappa,
+    kappa_s, kappa_ss and of X^(5), the first derivative a simple knot of the quintic may break."""
+    x = pps[0].x
+    i = int(np.searchsorted(x, u_knot, side="left"))
+    if not (i < len(x) and x[i] == u_knot):
+        raise ValueError(f"{u_knot!r} is not a breakpoint of the curve")
+    sides = {}
+    for side, k in (("left", i - 1), ("right", i)):
+        d = _piece_values(pps, u_knot, k)
+        kappa, kappa_s, kappa_ss = curvature_derivatives(d[0], d[1], d[2], d[3])
+        sides[side] = dict(kappa=float(kappa), kappa_s=float(kappa_s), kappa_ss=float(kappa_ss), d5=d[4])
+    return dict(kappa=sides["right"]["kappa"] - sides["left"]["kappa"],
+                kappa_s=sides["right"]["kappa_s"] - sides["left"]["kappa_s"],
+                kappa_ss=sides["right"]["kappa_ss"] - sides["left"]["kappa_ss"],
+                d5=float(np.hypot(*(sides["right"]["d5"] - sides["left"]["d5"]))))
+
+
+def c2_fits(cascade) -> tuple:
+    """The two C2SurfaceFit objects of the cascade (geometry._naca65_quintic_fits, the cached
+    construction make_cascade used), checked to carry the very knots of cascade.active_curves."""
+    from turbolenza.b2b import geometry as ge
+
+    spec = cascade.spec
+    reconstruction = spec.thickness_reconstruction or ge.DEFAULT_THICKNESS_RECONSTRUCTION[spec.surface_continuity]
+    fits = ge._naca65_quintic_fits(spec.cl0, spec.t_max_over_c, spec.profile_variant, reconstruction)
+    for name, fit in zip(("suction", "pressure"), fits):
+        if not np.array_equal(fit.curve.knots, getattr(cascade.active_curves, name).knots):
+            raise RuntimeError(f"the {name} fit does not carry the knots of cascade.active_curves")
+    return fits
+
+
+def construction_joints(cascade) -> list:
+    """Every joint of the C2 construction of both surfaces (module docstring of geometry.py,
+    "Surface continuity" and "The C2 leading edge"), in the curve parameter u:
+    - the LE fair: where it leaves the nose circle (phi = min_arc, G4 by construction), its cubic
+      r(phi) knots, the departure (curvature 0.1 % below 1/R_LE: a threshold, not a joint) and the
+      anchor (G2 join with the source);
+    - the reference junctions downstream of the anchor (thickness table stations, the Kovach start,
+      the Kovach TE fair and TE circle starts), mapped by C2SurfaceFit.parameter; those inside the
+      LE zone are replaced by the C2 LE and are not on the curve;
+    - the ends of each smoothed transition (junction s -+ a) and of its shift compensation
+      (-+ C2_COMPENSATION_RATIO a);
+    and, per joint, the one-sided kappa, kappa_s, kappa_ss at u -+ JOINT_STEP_U and their jumps,
+    its x/c and the distance to the nearest interior knot of the quintic."""
+    from turbolenza.b2b import geometry as ge
+
+    out = []
+    for name, fit in zip(("suction", "pressure"), c2_fits(cascade)):
+        curve = getattr(cascade.active_curves, name)
+        le, L = fit.leading_edge, fit.length
+        knots = np.asarray(curve.interior_knots)
+        dense = np.union1d(np.linspace(0.0, 1.0, DENSE_CURVE_U), knots)
+        arc = _arc_length(curve, dense)
+        items = [("LE circle end (phi = 20 deg)", "LE fair", float(le.arc_length(le.min_arc)[0]) / L, math.nan)]
+        edges = np.linspace(0.0, 1.0, ge.LE_FAIR_SPANS + 1)[1:-1]
+        for k, eta in enumerate(edges, 1):
+            phi = le.min_arc + eta * (le.anchor_angle - le.min_arc)
+            items.append((f"LE fair r(phi) knot {k}", "LE fair knot", float(le.arc_length(phi)[0]) / L, math.nan))
+        items.append(("LE departure (kappa 0.1 % below 1/R_LE)", "LE marker", fit.departure_u, math.nan))
+        items.append(("LE anchor (G2 join of fair and source)", "LE anchor", fit.anchor_u, math.nan))
+        for j in fit.reference.junctions:
+            if j.s > le.anchor:
+                kind = ("Kovach start" if j.label.startswith("Kovach start") else "TE" if j.label.startswith("Kovach TE")
+                        else "table station")
+                items.append((j.label, kind, float(fit.parameter(j.s)), j.kappa_jump))
+        for t in fit.source.transitions:
+            for factor, what in ((1.0, "transition"), (ge.C2_COMPENSATION_RATIO, "compensation")):
+                for sign, end in ((-1.0, "start"), (1.0, "end")):
+                    s = t.junction.s + sign * factor * t.half_width
+                    if le.anchor < s < fit.reference.length:
+                        items.append((f"{t.junction.label}: {what} {end} (a = {t.half_width:.3g} c)", f"{what} end",
+                                      float(fit.parameter(s)), math.nan))
+        for label, kind, u, c1_jump in items:
+            values = curve_curvature(curve, [u - JOINT_STEP_U, u, u + JOINT_STEP_U])
+            nearest = float(knots[int(np.argmin(np.abs(knots - u)))])
+            out.append(dict(surface=name, label=label, kind=kind, u=u, x_c=float(chordwise_of(cascade, values["point"][1])[0]),
+                            s_over_c=float(np.interp(u, dense, arc)) / cascade.active.chord,
+                            m_over_c=float(values["point"][1, 0]) / cascade.active.chord,
+                            kappa=float(values["kappa"][1]), kappa_s=float(values["kappa_s"][1]),
+                            kappa_ss=float(values["kappa_ss"][1]),
+                            jump_kappa=float(values["kappa"][2] - values["kappa"][0]),
+                            jump_kappa_s=float(values["kappa_s"][2] - values["kappa_s"][0]),
+                            jump_kappa_ss=float(values["kappa_ss"][2] - values["kappa_ss"][0]),
+                            smooth_bound_kappa=2.0 * JOINT_STEP_U * float(values["speed"][1] * abs(values["kappa_s"][1])),
+                            smooth_bound_kappa_s=2.0 * JOINT_STEP_U * float(values["speed"][1] * abs(values["kappa_ss"][1])),
+                            nearest_knot_du=abs(nearest - u), on_knot=bool(nearest == u), c1_kappa_jump=c1_jump))
+    return out
+
+
+def knot_statistics(cascade) -> dict:
+    """Over every interior knot of each quintic: the largest jumps of kappa, kappa_s, kappa_ss and
+    X^(5) between the two polynomial pieces at the knot (exact piece values), and the knots."""
+    from scipy.interpolate import BSpline, PPoly
+
+    out = {}
+    for name in ("suction", "pressure"):
+        curve = getattr(cascade.active_curves, name)
+        pps = [PPoly.from_spline(BSpline(curve.knots, curve.control_points[:, a], curve.degree)) for a in (0, 1)]
+        knots = np.asarray(curve.interior_knots)
+        jumps = [knot_jumps(curve, float(u), pps) for u in knots]
+        points = curve.evaluate(knots)
+        out[name] = dict(n=len(knots), u=knots, x_c=chordwise_of(cascade, points), m=points[:, 0],
+                         **{f"max_jump_{k}": float(max(abs(j[k]) for j in jumps)) for k in ("kappa", "kappa_s", "kappa_ss")},
+                         max_jump_d5=float(max(j["d5"] for j in jumps)), jumps=jumps)
+    return out
+
+
+def derivative_selfcheck(cascade) -> dict:
+    """curvature_derivatives against geometry.signed_curvature (kappa) and against central
+    differences in arc length of its own kappa and kappa_s on DENSE_CURVE_U samples (away from the
+    curve ends): a check of the formulas, not used for any result."""
+    from turbolenza.b2b import geometry as ge
+
+    out = {}
+    for name in ("suction", "pressure"):
+        curve = getattr(cascade.active_curves, name)
+        u = np.linspace(0.0, 1.0, DENSE_CURVE_U)
+        v = curve_curvature(curve, u)
+        kappa_ref = ge.signed_curvature(curve.derivative(u, 1), curve.derivative(u, 2))
+        ds = np.diff(_arc_length(curve, u))
+        h1, h0 = ds[1:], ds[:-1]
+        inner = slice(1, -1)
+
+        def central(f):
+            return (f[2:] * h0 ** 2 - f[:-2] * h1 ** 2 + f[1:-1] * (h1 ** 2 - h0 ** 2)) / (h0 * h1 * (h0 + h1))
+
+        keep = (u[inner] > 0.03) & (u[inner] < 0.97)
+        fd_s, fd_ss = central(v["kappa"]), central(v["kappa_s"])
+        scale_s, scale_ss = np.max(np.abs(v["kappa_s"][inner][keep])), np.max(np.abs(v["kappa_ss"][inner][keep]))
+        out[name] = dict(kappa_vs_signed_curvature=float(np.max(np.abs(v["kappa"] - kappa_ref))),
+                         kappa_s_vs_difference_rel=float(np.max(np.abs(fd_s - v["kappa_s"][inner])[keep])) / scale_s,
+                         kappa_ss_vs_difference_rel=float(np.max(np.abs(fd_ss - v["kappa_ss"][inner])[keep])) / scale_ss)
+    return out
+
+
+def _arc_length(curve, u) -> np.ndarray:
+    """Arc length from u = 0 by the trapezoidal rule of |X'| on the given (dense) u."""
+    speed = np.hypot(*np.asarray(curve.derivative(u, 1), float).T)
+    return np.concatenate(([0.0], np.cumsum(0.5 * (speed[1:] + speed[:-1]) * np.diff(u))))
+
+
+def blade_middle_rows(knots: dict, joints: list) -> list:
+    """Per level and anchor (gamma REPORT_GAMMA_DEG): the (i, j) of the "blade middle" and "blade
+    middle, wall-adjacent" maxima of |full residual|, the adjacent wall (j <= J/2: suction, j = 0
+    side; else pressure, j = J side), the x/c of that wall's node at station i, the m distance to
+    the nearest construction joint and to the nearest knot of that surface (in dm), and the term
+    split at the node."""
+    rows = []
+    for level in LEVELS:
+        case = case_of(level)
+        for anchor in ANCHORS:
+            grid = anchored_grid(level, anchor)
+            r = operator_level(grid, REPORT_GAMMA_DEG, keep_split=True)
+            masks = ts.row_classes(grid)
+            J, dm, c = len(grid.eta) - 1, grid.dm, grid.chord
+            for cls in ("blade middle", "blade middle, wall-adjacent"):
+                a = np.where(masks[cls], np.abs(r["full"]), -1.0)
+                i, j = (int(x) for x in np.unravel_index(int(np.argmax(a)), a.shape))
+                surface = "suction" if j <= J / 2 else "pressure"
+                node = (np.asarray(grid.nodes[i, 0], float) if surface == "suction"
+                        else np.asarray(grid.nodes[i, J], float) - np.asarray(grid.boundaries.periodic_translation))
+                own = [jt for jt in joints if jt["surface"] == surface and jt["kind"] not in ("LE fair knot", "LE marker")]
+                near = min(own, key=lambda jt: abs(jt["m_over_c"] * c - grid.m[i]))
+                k_m = knots[surface]["m"]
+                kk = int(np.argmin(np.abs(k_m - grid.m[i])))
+                ss_node = np.asarray(grid.nodes[i, 0], float)
+                ps_node = np.asarray(grid.nodes[i, J], float) - np.asarray(grid.boundaries.periodic_translation)
+                row = dict(level=level, anchor=anchor, row_class=cls, i=i, j=j, J=J, wall=surface,
+                           dm_over_c=dm / c, m_over_c=grid.m[i] / c, x_c=float(chordwise_of(case.cascade, node)[0]),
+                           x_c_ss_node=float(chordwise_of(case.cascade, ss_node)[0]),
+                           x_c_ps_node=float(chordwise_of(case.cascade, ps_node)[0]),
+                           nearest_joint=near["label"], nearest_joint_x_c=near["x_c"],
+                           joint_distance_dm=(grid.m[i] - near["m_over_c"] * c) / dm,
+                           nearest_knot_x_c=float(knots[surface]["x_c"][kk]),
+                           knot_distance_dm=(grid.m[i] - k_m[kk]) / dm,
+                           residual=float(r["full"][i, j]))
+                for term in ("A_ee", "C_mm", "mixed", "D_term", "E_term"):
+                    row[term] = float(r["split"][term][0][i, j])
+                rows.append(row)
+    return rows
+
+
+def stokes_character() -> dict | None:
+    """The source looked for behind the brief's "x/c 0.66": the kutta study's Stokes check
+    (outputs/kutta_study/stokes_check.csv; its phase 2: very_fine, station K, converged), its
+    elements by suction-side x/c with err_cos = LHS - RHS_cos. Read only; None when absent."""
+    path = ROOT / STOKES_CSV
+    if not path.exists():
+        return None
+    rows = list(csv.DictReader(open(path, encoding="utf-8")))
+    elements = [dict(element=r["element"], x_c=float(r["x_c_ss_mid"]), err_cos=float(r["err_cos"]), lhs=float(r["lhs"]))
+                for r in rows]
+    window = [e for e in elements if 0.55 <= e["x_c"] <= 0.75]
+    return dict(path=STOKES_CSV, elements=len(elements), window=window)
+
+
+def curvature_figure(cascade, joints: list, middle: list, path: Path) -> None:
+    """kappa and dkappa/ds (exact) against x/c for both C2 surfaces, the construction joints marked,
+    and a band at the blade-middle max x/c of each level (on the surface it lies next to)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    c = cascade.active.chord
+    colours = {"LE fair": ks.SERIES[4], "LE anchor": ks.SERIES[4], "table station": ks.MUTED,
+               "Kovach start": ks.SERIES[2], "TE": ks.SERIES[3], "transition end": ks.SERIES[2],
+               "compensation end": ks.SERIES[5]}
+    fig, axes = plt.subplots(3, 2, figsize=(12.0, 10.5), facecolor=ks.SURFACE)
+    for col, name in enumerate(("suction", "pressure")):
+        curve = getattr(cascade.active_curves, name)
+        u = np.linspace(0.0, 1.0, DENSE_CURVE_U)
+        v = curve_curvature(curve, u)
+        x = chordwise_of(cascade, v["point"])
+        for row, (key, label, scale, xlim, log) in enumerate((("kappa", "kappa * c", c, (0.0, 1.0), False),
+                                                              ("kappa_s", "dkappa/ds * c^2", c * c, (0.0, 1.0), True),
+                                                              ("kappa_s", "dkappa/ds * c^2 (x/c 0.5 .. 0.8)", c * c,
+                                                               (0.5, 0.8), False))):
+            ax = axes[row, col]
+            ks.style(ax, f"{name} surface: {label}")
+            sel = (x >= xlim[0]) & (x <= xlim[1])
+            ax.plot(x[sel], v[key][sel] * scale, color=ks.INK, linewidth=1.0)
+            if log:
+                ax.set_yscale("symlog", linthresh=1.0)
+            for jt in joints:
+                if jt["surface"] == name and jt["kind"] in colours and xlim[0] <= jt["x_c"] <= xlim[1]:
+                    ax.axvline(jt["x_c"], color=colours[jt["kind"]], linewidth=0.7,
+                               linestyle=":" if jt["kind"] == "table station" else "--")
+            for k, level in enumerate(LEVELS):
+                for r in middle:
+                    if r["level"] == level and r["anchor"] == "le_point" and r["wall"] == name:
+                        half = 0.5 * r["dm_over_c"]
+                        ax.axvspan(r["x_c"] - half, r["x_c"] + half, color=ks.LEVEL_RAMP[k], alpha=0.25, linewidth=0)
+            for mark in X_C_MARKS:
+                if xlim[0] <= mark <= xlim[1]:
+                    ax.axvline(mark, color=ks.SERIES[1], linewidth=0.8, linestyle="-.")
+            ax.set_xlim(*xlim)
+            ax.set_xlabel("x / c")
+    handles = [matplotlib.lines.Line2D([], [], color=colours[k], linestyle=":" if k == "table station" else "--", label=k)
+               for k in ("LE anchor", "table station", "Kovach start", "transition end", "compensation end", "TE")]
+    handles.append(matplotlib.lines.Line2D([], [], color=ks.SERIES[1], linestyle="-.", label="x/c 0.64, 0.66 (brief)"))
+    handles += [matplotlib.patches.Patch(color=ks.LEVEL_RAMP[k], alpha=0.4, label=f"blade-middle max, {level} (+- dm/2)")
+                for k, level in enumerate(LEVELS)]
+    fig.legend(handles=handles, loc="lower center", ncol=4, fontsize=7.5, frameon=False, labelcolor=ks.INK2)
+    fig.tight_layout(rect=(0, 0.06, 1, 1))
+    fig.savefig(path, dpi=150, facecolor=ks.SURFACE)
+    plt.close(fig)
+
+
+# --- Phase D2: the first-order term on the periodic rows ----------------------------------------------------------------
+
+def side_line_exact(junction, junction_angle: float, far_m: float, far_angle: float, m) -> dict:
+    """The side line in closed form, written out here (not grid.py's _side_line): beta linear in m,
+    beta = junction_angle + (m - m_J) rate, rate = (far_angle - junction_angle) / (far_m - m_J),
+    y0 = y_J + ln(cos(junction_angle) / cos(beta)) / rate (the integral of tan(beta); y_J + (m - m_J)
+    tan(junction_angle) for rate 0), tan(beta), cos(beta), d tan(beta)/dm = sec^2(beta) rate and
+    d2 tan(beta)/dm2 = 2 sec^2(beta) tan(beta) rate^2 (= d3 y0/dm3)."""
+    m = np.asarray(m, float)
+    junction = np.asarray(junction, float)
+    rate = (far_angle - junction_angle) / (far_m - junction[0])
+    beta = junction_angle + (m - junction[0]) * rate
+    tan, cos = np.tan(beta), np.cos(beta)
+    if rate == 0.0:
+        y = junction[1] + (m - junction[0]) * math.tan(junction_angle)
+    else:
+        y = junction[1] + np.log(math.cos(junction_angle) / cos) / rate
+    sec2 = 1.0 / cos ** 2
+    return dict(beta=beta, tan=tan, cos=cos, y=y, rate=rate, dtan=sec2 * rate, d2tan=2.0 * sec2 * tan * rate ** 2)
+
+
+def side_junctions(grid, cascade, anchor: str) -> dict:
+    """(junction point, junction angle, far m, far angle) of the inlet and exit side lines of an
+    anchor: le_point the LE / TE point of cascade.active, tip the nose tip / tail end."""
+    b = grid.boundaries
+    if anchor == "le_point":
+        inlet_j, exit_j = cascade.active.leading_edge_point, cascade.active.trailing_edge_point
+    elif anchor == "tip":
+        ends = tip_and_tail(cascade)
+        inlet_j, exit_j = ends["tip"]["point"], ends["tail"]["point"]
+    else:
+        raise ValueError(f"anchor must be one of {ANCHORS}, got {anchor!r}")
+    return dict(inlet=(np.asarray(inlet_j, float), float(cascade.kappa_le), b.m_in, b.inlet_angle),
+                exit=(np.asarray(exit_j, float), float(cascade.kappa_te), b.m_out, b.exit_angle))
+
+
+def periodic_exact(grid, cascade, anchor: str) -> dict:
+    """side_line_exact at every station, NaN on the blade stations: the inlet law on 0 .. f-1, the
+    exit law on l+1 .. n_m-1."""
+    f, l, n = grid.first_blade_i, grid.last_blade_i, len(grid.m)
+    m = np.asarray(grid.m, float)
+    junctions = side_junctions(grid, cascade, anchor)
+    out = {k: np.full(n, np.nan) for k in ("beta", "tan", "cos", "y", "dtan", "d2tan")}
+    rates = {}
+    for side, stations in (("inlet", slice(0, f)), ("exit", slice(l + 1, n))):
+        ex = side_line_exact(*junctions[side], m[stations])
+        rates[side] = ex["rate"]
+        for k in out:
+            out[k][stations] = ex[k]
+    out["rate"] = rates
+    out["periodic"] = np.ones(n, bool)
+    out["periodic"][f:l + 1] = False
+    return out
+
+
+def exact_metrics_of(met, ex: dict):
+    """A copy of the GridMetrics (dataclasses.replace) with the closed-form side-line fields on the
+    periodic stations: S = pitch, dS/dm = 0, tan(beta0) = tan(beta1) = tan(beta) (every eta),
+    beta, sin, cos, d tan(beta)/dm; the blade stations as they are."""
+    p = ex["periodic"]
+    grid = met.grid
+    n_eta = len(grid.eta)
+    S = np.array(met.S)
+    S[p] = grid.pitch
+    dS = np.array(met.dS_dm)
+    dS[p] = 0.0
+    tan0, tan1 = np.array(met.tan_beta0), np.array(met.tan_beta1)
+    tan0[p] = tan1[p] = ex["tan"][p]
+    d0, d1 = np.array(met.dtan_beta0_dm), np.array(met.dtan_beta1_dm)
+    d0[p] = d1[p] = ex["dtan"][p]
+    fields2 = {}
+    for name, value in (("tan_beta", ex["tan"]), ("beta", ex["beta"]), ("sin_beta", np.sin(ex["beta"])),
+                        ("cos_beta", ex["cos"]), ("dtan_beta_dm", ex["dtan"])):
+        a = np.array(getattr(met, name))
+        a[p] = np.repeat(value[p][:, None], n_eta, axis=1)
+        fields2[name] = a
+    return replace(met, S=S, dS_dm=dS, tan_beta0=tan0, tan_beta1=tan1, dtan_beta0_dm=d0, dtan_beta1_dm=d1, **fields2)
+
+
+def exact_coefficients_of(co, ex: dict, pitch: float) -> dict:
+    """A .. E with the closed forms on the periodic stations (rho = 1, mdot' = 1, normalized mode):
+    A = 1 / (pitch cos^2 beta), B = tan beta, C = pitch, D = A_eta - B_m = - d tan(beta)/dm, E = C_m -
+    B_eta = 0 [Eqs. 5-22 to 5-26]; the blade stations keep the discrete fields."""
+    if co.mass_flow_per_depth != 1.0 or co.c_ref is not None:
+        raise ValueError("the closed forms here are for mdot' = 1 in normalized mode")
+    p = ex["periodic"]
+    out = {k: np.array(getattr(co, k)) for k in "ABCDE"}
+    n_eta = out["A"].shape[1]
+    for k, value in (("A", 1.0 / (pitch * ex["cos"] ** 2)), ("B", ex["tan"]), ("C", np.full(len(p), pitch)),
+                     ("D", -ex["dtan"]), ("E", np.zeros(len(p)))):
+        out[k][p] = np.repeat(value[p][:, None], n_eta, axis=1)
+    return out
+
+
+D2_CLASSES = ("periodic far", "periodic near transitions")
+INGREDIENTS = ("y0", "S", "dS_dm", "tan_beta", "cos_beta", "dtan_beta_dm (not read by coefficients.py)", "A", "B", "C", "D",
+               "E")
+
+
+def periodic_level(level: str, anchor: str) -> dict:
+    """D2 on one level and anchor: ingredient errors by class, the three residuals (discrete
+    coefficients, exact metrics, exact coefficients) and the coefficient-error contributions."""
+    from turbolenza.b2b.coefficients import build_coefficients
+
+    case = case_of(level)
+    grid = anchored_grid(level, anchor)
+    met, bcs, co = manufactured_of(grid)
+    ex = periodic_exact(grid, case.cascade, anchor)
+    p, pitch = ex["periodic"], grid.pitch
+    f, l, n, J = grid.first_blade_i, grid.last_blade_i, len(grid.m), len(grid.eta) - 1
+    dm, deta = co.length_scale * grid.dm, grid.deta
+    gamma = D2_GAMMA_DEG
+    psi = ts.uniform_psi(grid, gamma)
+    met_ex = exact_metrics_of(met, ex)
+    co_met = build_coefficients(met_ex, np.ones((n, J + 1)), 1.0, c_ref=None)
+    co_ex = exact_coefficients_of(co, ex, pitch)
+    fields_of = {"discrete": {k: np.asarray(getattr(co, k)) for k in "ABCDE"},
+                 "exact metrics": {k: np.asarray(getattr(co_met, k)) for k in "ABCDE"}, "exact coefficients": co_ex}
+    R = {name: ts.raw_rows(*(fc[k] for k in "ABCDE"), grid, bcs, dm, deta, psi)[0] for name, fc in fields_of.items()}
+    masks = ts.row_classes(grid)
+    # the exact psi derivatives at the periodic nodes (psi = (y - m tan gamma) / pitch, y = y0(m) + eta S)
+    t_g = math.tan(math.radians(gamma))
+    col = lambda v: np.repeat(np.asarray(v)[:, None], J + 1, axis=1)  # noqa: E731
+    psi_ex = dict(eta=col(np.full(n, 1.0)), m=col((ex["tan"] - t_g) / pitch), mm=col(ex["dtan"] / pitch))
+    psi_h = dict(eta=np.full_like(psi, np.nan), m=np.full_like(psi, np.nan), mm=np.full_like(psi, np.nan),
+                 me=np.full_like(psi, np.nan), ee=np.full_like(psi, np.nan))
+    psi_h["eta"][1:-1, 1:-1] = (psi[1:-1, 2:] - psi[1:-1, :-2]) / (2 * deta)
+    psi_h["m"][1:-1, 1:-1] = (psi[2:, 1:-1] - psi[:-2, 1:-1]) / (2 * dm)
+    psi_h["mm"][1:-1, 1:-1] = (psi[2:, 1:-1] - 2 * psi[1:-1, 1:-1] + psi[:-2, 1:-1]) / dm ** 2
+    psi_h["me"][1:-1, 1:-1] = (psi[2:, 2:] - psi[2:, :-2] - psi[:-2, 2:] + psi[:-2, :-2]) / (4 * dm * deta)
+    psi_h["ee"][1:-1, 1:-1] = (psi[1:-1, 2:] - 2 * psi[1:-1, 1:-1] + psi[1:-1, :-2]) / deta ** 2
+    disc = fields_of["discrete"]
+    contrib = dict(A=(disc["A"] - co_ex["A"]) * 0.0, B=-2.0 * (disc["B"] - co_ex["B"]) * 0.0,
+                   C=(disc["C"] - co_ex["C"]) * psi_ex["mm"], D=(disc["D"] - co_ex["D"]) * psi_ex["eta"],
+                   E=(disc["E"] - co_ex["E"]) * psi_ex["m"])
+    total = sum(contrib.values())
+    y0 = np.asarray(grid.nodes, float)[:, 0, 1]
+    station = {"y0": np.abs(y0 - ex["y"]), "S": np.abs(np.asarray(met.S) - pitch), "dS_dm": np.abs(np.asarray(met.dS_dm)),
+               "tan_beta": np.abs(np.asarray(met.tan_beta0) - ex["tan"]),
+               "cos_beta": np.abs(np.asarray(met.cos_beta)[:, 0] - ex["cos"]),
+               "dtan_beta_dm (not read by coefficients.py)": np.abs(np.asarray(met.dtan_beta0_dm) - ex["dtan"])}
+    out = dict(level=level, anchor=anchor, dm_over_c=grid.dm / grid.chord, f=f, l=l, n_m=n, J=J,
+               rate_inlet=ex["rate"]["inlet"], rate_exit=ex["rate"]["exit"], classes={})
+    for cls in D2_CLASSES:
+        mask = masks[cls]
+        stations = np.flatnonzero(mask.any(axis=1))
+        c_out = dict(stations=[int(s) for s in stations])
+        for name in INGREDIENTS:
+            if name in station:
+                values = station[name][stations]
+                k = int(np.argmax(values))
+                c_out[name] = dict(max=float(values[k]), i=int(stations[k]))
+            else:
+                values = np.where(mask, np.abs(disc[name] - co_ex[name]), -1.0)
+                i, j = np.unravel_index(int(np.argmax(values)), values.shape)
+                c_out[name] = dict(max=float(values[i, j]), i=int(i))
+        for name, field in R.items():
+            a = np.where(mask, np.abs(field), -1.0)
+            i, j = (int(x) for x in np.unravel_index(int(np.argmax(a)), a.shape))
+            c_out[f"R {name}"] = dict(max=float(a[i, j]), i=i, j=j)
+        i, j = c_out["R discrete"]["i"], c_out["R discrete"]["j"]
+        c_out["at_max"] = dict(i=i, j=j, i_from_far=min(i, n - 1 - i), i_minus_f=i - f, l_minus_i=l - i,
+                               R=float(R["discrete"][i, j]), R_exact_coefficients=float(R["exact coefficients"][i, j]),
+                               **{f"c_{k}": float(contrib[k][i, j]) for k in "CDE"}, c_sum=float(total[i, j]))
+        c_out["at_max"]["ratio_D"] = c_out["at_max"]["c_D"] / c_out["at_max"]["R"]
+        c_out["at_max"]["ratio_sum"] = (c_out["at_max"]["c_sum"] + c_out["at_max"]["R_exact_coefficients"]) / c_out["at_max"]["R"]
+        gap = np.abs((R["discrete"] - R["exact coefficients"]) - total)[mask]
+        c_out["decomposition_gap"] = float(np.max(gap)) if gap.size else math.nan
+        for k in "CDE":
+            a = np.abs(contrib[k])[mask]
+            c_out[f"max |c_{k}|"] = float(np.max(a)) if a.size else math.nan
+        c_out["psi_check"] = {key: float(np.nanmax(np.abs(psi_h[key] - psi_ex[key])[mask])) for key in ("eta", "m", "mm")}
+        c_out["psi_check"]["me"] = float(np.nanmax(np.abs(psi_h["me"])[mask]))
+        c_out["psi_check"]["ee"] = float(np.nanmax(np.abs(psi_h["ee"])[mask]))
+        out["classes"][cls] = c_out
+    # the run ends and far stations: the metric slope there (one-sided at 0, f-1, l+1, n_m-1)
+    out["run_ends"] = {int(i): dict(tan_beta=float(station["tan_beta"][i]), D=float(np.max(np.abs(disc["D"][i] - co_ex["D"][i]))))
+                       for i in (0, 1, 2, f - 2, f - 1, l + 1, l + 2, n - 3, n - 2, n - 1)}
+    return out
+
+
+def phaseD() -> None:
+    say("## Phase D: side checks (report only; no fix, no solve)")
+    say()
+    case = case_of(GEOMETRY_LEVEL)
+    cascade = case.cascade
+    c = cascade.active.chord
+    say(f"Geometry: kutta_study.case_of({GEOMETRY_LEVEL!r}).cascade (NACA 65-(12A10)10, C2, kovach_sandercock, "
+        f"thickness {cascade.spec.thickness_reconstruction or 'C2 default (quintic_natural_sqrt)'}, stagger 33 deg; "
+        f"chord {c:g}). Curvature derivatives from the quintic's exact u derivatives (curvature_derivatives).")
+    say()
+    # D1: the self-check of the derivative formulas
+    check = derivative_selfcheck(cascade)
+    say("**D1 self-check of curvature_derivatives** (not a result): " + "; ".join(
+        f"{name}: |kappa - signed_curvature| {v['kappa_vs_signed_curvature']:.1e}, kappa_s against a central difference of "
+        f"kappa in s {v['kappa_s_vs_difference_rel']:.1e} (relative to max |kappa_s|, x/c-range u 0.03 .. 0.97), kappa_ss "
+        f"against one of kappa_s {v['kappa_ss_vs_difference_rel']:.1e}" for name, v in check.items()) + ".")
+    say()
+    joints = construction_joints(cascade)
+    knots = knot_statistics(cascade)
+    table([j for j in joints if j["kind"] != "LE fair knot"],
+          [("surface", "surface"), ("label", "joint"), ("u", "u"), ("x_c", "x/c"), ("s_over_c", "s/c"), ("kappa", "kappa c"),
+           ("kappa_s", "kappa_s c^2"), ("kappa_ss", "kappa_ss c^3"), ("jump_kappa", "jump kappa"),
+           ("jump_kappa_s", "jump kappa_s"), ("jump_kappa_ss", "jump kappa_ss"),
+           ("smooth_bound_kappa", "2e-9 |X'| |kappa_s|"), ("nearest_knot_du", "|u - nearest knot|"),
+           ("c1_kappa_jump", "C1 kappa jump there")],
+          f"D1: the construction joints of the C2 surfaces (one-sided values at u -+ {JOINT_STEP_U:g}; the 23 LE fair "
+          f"r(phi) knots per surface are in phaseD_joints.csv)", digits=4)
+    fair = [j for j in joints if j["kind"] == "LE fair knot"]
+    say("LE fair r(phi) knots: " + "; ".join(
+        f"{name}: {sum(1 for j in fair if j['surface'] == name)} knots, u {min(j['u'] for j in fair if j['surface'] == name):.5f}"
+        f" .. {max(j['u'] for j in fair if j['surface'] == name):.5f}, largest |jump| kappa "
+        f"{max(abs(j['jump_kappa']) for j in fair if j['surface'] == name):.2e}, kappa_s "
+        f"{max(abs(j['jump_kappa_s']) for j in fair if j['surface'] == name):.2e}, kappa_ss "
+        f"{max(abs(j['jump_kappa_ss']) for j in fair if j['surface'] == name):.2e}" for name in ("suction", "pressure")) + ".")
+    say()
+    on_knot = [j for j in joints if j["on_knot"]]
+    say(f"Joints that are also knots of the quintic: {len(on_knot)} "
+        f"({', '.join(j['surface'] + ' ' + j['label'] for j in on_knot) or 'none'}); every other joint lies inside one "
+        f"polynomial piece of the quintic (closest knot distance in the table).")
+    say()
+    table([dict(surface=name, n=k["n"], max_jump_kappa=k["max_jump_kappa"], max_jump_kappa_s=k["max_jump_kappa_s"],
+                max_jump_kappa_ss=k["max_jump_kappa_ss"], max_jump_d5=k["max_jump_d5"]) for name, k in knots.items()],
+          [("surface", "surface"), ("n", "interior knots"), ("max_jump_kappa", "max |jump kappa|"),
+           ("max_jump_kappa_s", "max |jump kappa_s|"), ("max_jump_kappa_ss", "max |jump kappa_ss|"),
+           ("max_jump_d5", "max |jump X^(5)| (per u^5)")],
+          "D1: the knots of the quintics, jumps between the two polynomial pieces at each knot (exact piece values)", digits=3)
+    near_rows = []
+    for name in ("suction", "pressure"):
+        own = [j for j in joints if j["surface"] == name and j["kind"] not in ("LE fair knot", "LE marker")]
+        k = knots[name]
+        for mark in X_C_MARKS:
+            jt = min(own, key=lambda j: abs(j["x_c"] - mark))
+            kk = int(np.argmin(np.abs(k["x_c"] - mark)))
+            kj = k["jumps"][kk]
+            near_rows.append(dict(surface=name, x_c_mark=mark, joint=jt["label"], joint_x_c=jt["x_c"],
+                                  joint_jump_kappa=jt["jump_kappa"], joint_jump_kappa_s=jt["jump_kappa_s"],
+                                  joint_jump_kappa_ss=jt["jump_kappa_ss"], knot_x_c=float(k["x_c"][kk]),
+                                  knot_jump_kappa=kj["kappa"], knot_jump_kappa_s=kj["kappa_s"],
+                                  knot_jump_kappa_ss=kj["kappa_ss"], knot_jump_d5=kj["d5"]))
+    table(near_rows, [("surface", "surface"), ("x_c_mark", "x/c"), ("joint", "nearest joint"), ("joint_x_c", "its x/c"),
+                      ("joint_jump_kappa", "jump kappa"), ("joint_jump_kappa_s", "jump kappa_s"),
+                      ("joint_jump_kappa_ss", "jump kappa_ss"), ("knot_x_c", "nearest knot x/c"),
+                      ("knot_jump_kappa", "knot: jump kappa"), ("knot_jump_kappa_s", "jump kappa_s"),
+                      ("knot_jump_kappa_ss", "jump kappa_ss"), ("knot_jump_d5", "jump X^(5)")],
+          "D1: the joint and the knot nearest to x/c 0.64 and 0.66 on each surface", digits=4)
+    middle = blade_middle_rows(knots, joints)
+    table(middle, [("level", "level"), ("anchor", "anchor"), ("row_class", "class"), ("i", "i"), ("j", "j"), ("J", "J"),
+                   ("wall", "next to"), ("m_over_c", "m/c"), ("x_c", "x/c (that wall's node)"),
+                   ("x_c_ss_node", "x/c SS node"), ("x_c_ps_node", "x/c PS node"), ("nearest_joint", "nearest joint"),
+                   ("joint_distance_dm", "(m - m_joint)/dm"), ("knot_distance_dm", "(m - m_knot)/dm"),
+                   ("residual", "residual"), ("C_mm", "C psi_mm"), ("mixed", "-2B psi_me"), ("D_term", "D psi_e"),
+                   ("E_term", "E psi_m"), ("A_ee", "A psi_ee")],
+          f"D1: the blade-middle maxima (gamma {REPORT_GAMMA_DEG:g} deg), where they sit and their term split", digits=4)
+    stokes = stokes_character()
+    if stokes is None:
+        say(f"x/c 0.66: {STOKES_CSV} is absent; the source of the brief's number could not be located.")
+    else:
+        say(f"x/c 0.66 (brief): the only data found that shows a change near it is {stokes['path']} (kutta study phase 2, "
+            f"very_fine, station K, converged; {stokes['elements']} elements, err_cos = LHS - RHS_cos in m/s x chord). The "
+            f"elements with suction-side x/c 0.55 .. 0.75:")
+        say()
+        table(stokes["window"], [("element", "element"), ("x_c", "x/c (SS, mid)"), ("err_cos", "err_cos"), ("lhs", "LHS")],
+              "Stokes error by element (read from the kutta study's file, not recomputed)", digits=5)
+        say("Whether this is the change the brief means is not stated in that study's report; it is cited as data only.")
+        say()
+    curvature_figure(cascade, joints, middle, OUT / "phaseD_curvature.png")
+    say("Figure: phaseD_curvature.png.")
+    say()
+    # D2
+    say(f"### D2: the first-order term on the periodic rows (gamma {D2_GAMMA_DEG:g} deg, rho = 1, mdot' = 1)")
+    say()
+    say("coefficients.py builds A, B, C from metrics.S, metrics.tan_beta, metrics.cos_beta only (pointwise), and D = A_eta - "
+        "B_m, E = C_m - B_eta by second-order differences of those fields (coefficients.py:_d_dm, _d_deta: central in m over "
+        "the whole range, one-sided at i = 0 and n_m-1). On a periodic station metrics.py takes tan_beta0 = tan_beta1 = "
+        "dy0/dm by metrics.py:_d_dm_run inside each run (central inside, three-point one-sided at the run ends i = 0, f-1, "
+        "l+1, n_m-1), S = y1 - y0, cos from tan. metrics.dtan_beta_dm is not read by coefficients.py. Exact closed forms "
+        "(side_line_exact): beta linear in m, y0 its integral, S = pitch, dS/dm = 0, A = 1/(pitch cos^2), B = tan, "
+        "C = pitch, D = -sec^2(beta) dbeta/dm, E = 0. psi = (y - m tan gamma)/pitch with y = y0(m) + eta S on a periodic "
+        "station: psi_eta = S/pitch = 1, psi_m = (tan beta - tan gamma)/pitch, psi_mm = d tan(beta)/dm / pitch, "
+        "psi_me = psi_ee = 0.")
+    say()
+    results = {(a, level): periodic_level(level, a) for a in ANCHORS for level in LEVELS}
+    dm = [results[("le_point", level)]["dm_over_c"] for level in LEVELS]
+    ing_rows, res_rows, contrib_rows, where_rows, end_rows = [], [], [], [], []
+    with np.errstate(divide="ignore"):
+        for a in ANCHORS:
+            for cls in D2_CLASSES:
+                for name in INGREDIENTS:
+                    v = [results[(a, level)]["classes"][cls][name]["max"] for level in LEVELS]
+                    ing_rows.append(dict(anchor=a, row_class=cls, ingredient=name, **dict(zip(LEVELS, v)),
+                                         at_i_very_fine=results[(a, "very_fine")]["classes"][cls][name]["i"],
+                                         order=ts.power_law(dm, v)["p"]))
+                for name in ("discrete", "exact metrics", "exact coefficients"):
+                    v = [results[(a, level)]["classes"][cls][f"R {name}"]["max"] for level in LEVELS]
+                    res_rows.append(dict(anchor=a, row_class=cls, residual=name, **dict(zip(LEVELS, v)),
+                                         order=ts.power_law(dm, v)["p"]))
+                for level in LEVELS:
+                    r = results[(a, level)]["classes"][cls]
+                    contrib_rows.append(dict(anchor=a, row_class=cls, level=level, dm_over_c=results[(a, level)]["dm_over_c"],
+                                             **r["at_max"], decomposition_gap=r["decomposition_gap"],
+                                             **{f"max_c_{k}": r[f"max |c_{k}|"] for k in "CDE"}))
+                    where_rows.append(dict(anchor=a, row_class=cls, level=level, i=r["at_max"]["i"], j=r["at_max"]["j"],
+                                           n_m=results[(a, level)]["n_m"], f=results[(a, level)]["f"],
+                                           i_from_far=r["at_max"]["i_from_far"], i_minus_f=r["at_max"]["i_minus_f"]))
+                for k in "CDE":
+                    v = [results[(a, level)]["classes"][cls][f"max |c_{k}|"] for level in LEVELS]
+                    res_rows.append(dict(anchor=a, row_class=cls, residual=f"max |c_{k}| (coefficient error x exact psi "
+                                         f"derivative)", **dict(zip(LEVELS, v)), order=ts.power_law(dm, v)["p"]))
+            for level in LEVELS:
+                r = results[(a, level)]
+                for i, v in r["run_ends"].items():
+                    end_rows.append(dict(anchor=a, level=level, i=i, f=r["f"], l=r["l"], n_m=r["n_m"], **v))
+    for a in ANCHORS:
+        table([r for r in ing_rows if r["anchor"] == a],
+              [("row_class", "class"), ("ingredient", "ingredient"), *[(level, level) for level in LEVELS],
+               ("order", "order"), ("at_i_very_fine", "at i (vf)")],
+              f"D2 {a}: max |discrete - closed form| of each ingredient over the class's nodes", digits=3)
+    say(f"Side-line beta rate dbeta/dm: inlet {results[('le_point', 'very_fine')]['rate_inlet']:.6g} (le_point), "
+        f"{results[('tip', 'very_fine')]['rate_inlet']:.6g} (tip) rad per chord; exit "
+        f"{results[('le_point', 'very_fine')]['rate_exit']:.6g}, {results[('tip', 'very_fine')]['rate_exit']:.6g} "
+        f"(exit angle = kappa_te: a straight line).")
+    say()
+    table([r for r in end_rows if r["level"] in ("very_coarse", "very_fine")],
+          [("anchor", "anchor"), ("level", "level"), ("i", "i"), ("f", "f"), ("l", "l"), ("n_m", "n_m"),
+           ("tan_beta", "|tan_beta - tan|"), ("D", "max_j |D - D_exact|")],
+          "D2: the metric slope and D at the run ends (0, f-1, l+1, n_m-1, one-sided slope) and their neighbours", digits=3)
+    table(res_rows, [("anchor", "anchor"), ("row_class", "class"), ("residual", "residual"),
+                     *[(level, level) for level in LEVELS], ("order", "order")],
+          "D2: max |raw residual| of the class with the discrete coefficients (phase B), with exact metrics (tan, cos, S "
+          "exact on the periodic stations; D, E still differenced by coefficients.py), with exact coefficients (truncation "
+          "of the psi stencil only), and the coefficient-error contributions", digits=3)
+    table(contrib_rows, [("anchor", "anchor"), ("row_class", "class"), ("level", "level"), ("i", "i"), ("j", "j"),
+                         ("i_from_far", "i from far end"), ("i_minus_f", "i - f"), ("R", "residual"),
+                         ("c_D", "(D - D_ex) psi_e"), ("c_C", "(C - C_ex) psi_mm"), ("c_E", "(E - E_ex) psi_m"),
+                         ("R_exact_coefficients", "truncation"), ("ratio_D", "c_D / residual"),
+                         ("ratio_sum", "(c sum + truncation) / residual"), ("decomposition_gap", "decomposition gap")],
+          "D2: at the node of the class's max |residual|: the coefficient-error contributions against the residual",
+          digits=4)
+    psi_check = {cls: {k: max(results[(a, level)]["classes"][cls]["psi_check"][k] for a in ANCHORS for level in LEVELS)
+                       for k in ("eta", "m", "mm", "me", "ee")} for cls in D2_CLASSES}
+    say("Check of the exact psi derivatives against the discrete ones on the class nodes (largest over anchors and levels): "
+        + "; ".join(f"{cls}: psi_eta {v['eta']:.1e}, psi_m {v['m']:.1e}, psi_mm {v['mm']:.1e}, discrete psi_me "
+                    f"{v['me']:.1e}, psi_ee {v['ee']:.1e}" for cls, v in psi_check.items()) + ".")
+    say()
+    table(where_rows, [("anchor", "anchor"), ("row_class", "class"), ("level", "level"), ("i", "i"), ("j", "j"),
+                       ("n_m", "n_m"), ("f", "f"), ("i_from_far", "i from the far end"), ("i_minus_f", "i - f")],
+          "D2: where the class maximum sits", digits=4)
+    write_csv("phaseD_joints.csv", [{k: v for k, v in j.items()} for j in joints])
+    write_csv("phaseD_blade_middle.csv", middle)
+    write_csv("phaseD_periodic_ingredients.csv", ing_rows + [dict(kind="run_end", **r) for r in end_rows])
+    write_csv("phaseD_periodic_terms.csv", res_rows + [dict(kind="at_max", **r) for r in contrib_rows])
+    save("phaseD.json", dict(selfcheck=check, joints=joints,
+                             knots={k: {kk: vv for kk, vv in v.items() if kk != "jumps"} for k, v in knots.items()},
+                             near_marks=near_rows, blade_middle=middle, stokes=stokes,
+                             periodic={f"{a}|{level}": r for (a, level), r in results.items()}, ingredients=ing_rows,
+                             residuals=res_rows, contributions=contrib_rows, where=where_rows, run_ends=end_rows,
+                             psi_check=psi_check,
+                             settings=dict(GEOMETRY_LEVEL=GEOMETRY_LEVEL, JOINT_STEP_U=JOINT_STEP_U,
+                                           DENSE_CURVE_U=DENSE_CURVE_U, D2_GAMMA_DEG=D2_GAMMA_DEG, LEVELS=LEVELS)))
+    write_lines("phaseD.md")
+
+
 # --- the figure -------------------------------------------------------------------------------------------------------
 
 def closeup_figure(path: Path) -> None:
@@ -1035,7 +1712,7 @@ def closeup_figure(path: Path) -> None:
 
 # ------------------------------------------------------------------------------------------------------------------------
 
-PHASES = {"phaseA": phaseA, "phaseB": phaseB}          # phaseD and report: later phases of the plan
+PHASES = {"phaseA": phaseA, "phaseB": phaseB, "phaseD": phaseD}        # the report: a later step
 
 
 class _Tee:

@@ -110,19 +110,58 @@ call and builds no matrix; solver.py runs the iteration (one correction per dens
     here: the caller passes config.IterationSettings.kutta_relaxation (project baseline
     config.KUTTA_RELAXATION).
 
-Status: implemented 2026-11-13, under review, not frozen.
+7. Study option: where the two wall speeds are read (wall_values, residual_from_walls)
+    [Kutta grid-convergence study, scripts/kutta_study.py, 2026-11-14; default "station"]
+    "station" (the default, sections 2 and 3): the wall nodes of the TE station l. It is
+        kutta_residual exactly: residual_from_walls(wall_values(flow, grid)) gives the same
+        numbers bit for bit.
+    "fixed_m": a fixed physical place m* = m_TE - offset * chord (grid.m_te, grid.chord),
+        the speed |W| (and W_m) of each wall interpolated along that wall's blade nodes
+        (stations first_blade_i .. last_blade_i, all on the blade) in m: "cubic", the
+        Lagrange cubic through the four nodes nearest m* (two on each side where the run
+        allows, else shifted inward), or "linear", between the two nodes around m*. m* must
+        lie within [m(first_blade_i), m(last_blade_i)], nodes on both sides; outside it is
+        refused (KuttaError), never extrapolated. The SS / PS identity is the TE station's,
+        and the correction keeps the TE station's S, beta0, beta1 and dm (section 5): only
+        the two speeds move.
+
+8. Study option: the correction (aungier_exit_angle_correction, inside_outside_average,
+    relaxed_exit_angle) [scripts/kutta_study.py, 2026-11-14; default "current"]
+    "current" (the default): sections 5 and 6 as they stand, lambda_K in (0, 1].
+    "aungier_13_57": Eqs. 13-57 and 13-59 as the study brief writes them in this frame, an
+        implementation of its own (not a call of exit_angle_correction):
+            d(r C_theta) = 2 r (W0_te - W1_te) dm_K / (S (cos b0 + cos b1)),
+            dm_K = m_K - m_(K-1), b0 = atan(tan_beta0), b1, S and r (= 1, planar) at K;
+            d(tan beta_out) = d(r C_theta) / (r W_m)_downstream boundary,
+        (r W_m) the mean over eta of the far exit station (trapezoidal rule, eta in [0, 1]).
+        The same formula as section 5, so the two agree to round-off: a check, not a new
+        method. Its relaxation alpha is any finite positive number (the study scans it; the
+        project baseline stays lambda_K <= 1 for "current").
+    "aungier_13_57_58": the same with Eq. 13-58's inside/outside average for W0_te, W1_te,
+            W_i_te = 0.5 [W_i + 2 (W_m)_i / (cos b0 + cos b1)],    i = 0, 1,
+        W_i and (W_m)_i the wall speed and meridional velocity where the condition is read
+        (section 7), b0, b1 at K. Its fixed point is W0_te = W1_te, not Eq. 5-34 (section 5):
+        the driven residual is the averaged one.
+
+Status: implemented 2026-11-13, under review, not frozen. Sections 7 and 8: study options,
+2026-11-14.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from turbolenza.b2b.flow import FlowField
 from turbolenza.b2b.grid import Grid
 from turbolenza.b2b.metrics import GridMetrics
+
+
+KUTTA_EVALUATIONS = ("station", "fixed_m")        # section 7; "station" is the default and the production rule
+KUTTA_INTERPOLATIONS = ("cubic", "linear")       # "fixed_m" only
+KUTTA_METHODS = ("current", "aungier_13_57", "aungier_13_57_58")     # section 8; "current" is the default
 
 
 class KuttaError(ValueError):
@@ -253,4 +292,161 @@ def next_exit_angle(exit_angle: float, correction: ExitAngleCorrection, relaxati
         raise KuttaError(f"the correction of tan(beta_out) is {correction.delta_tan!r}: not finite")
     if step == 0.0:
         return angle                    # equal TE speeds: the angle stays exactly (no tan / arctan round trip)
+    return math.atan(math.tan(angle) + step)
+
+
+# --- section 7: where the wall speeds are read (study option, 2026-11-14) ---------------------------------------
+
+@dataclass(frozen=True)
+class WallValues:
+    """The two wall speeds at the place where the Kutta condition is evaluated (module
+    docstring, section 7). Walls are Aungier's: 0 the eta = 0 wall (theta0), 1 the eta = 1
+    wall (theta1)."""
+
+    evaluation: str                 # "station" | "fixed_m"
+    m: float                        # where, the grid's length unit
+    W0: float                       # |W| on the eta = 0 wall
+    W1: float                       # |W| on the eta = 1 wall
+    W_m0: float                     # W_m on the eta = 0 wall
+    W_m1: float                     # W_m on the eta = 1 wall
+    stations: tuple[int, ...]       # the blade stations whose wall nodes were read
+    interpolation: str | None       # "cubic" | "linear" for "fixed_m"; None at the station
+
+
+def wall_values(flow: FlowField, grid: Grid, evaluation: str = "station", offset_chords: float | None = None,
+                interpolation: str = "cubic") -> WallValues:
+    """The wall speeds of flow on grid where the Kutta condition is read (module docstring,
+    section 7): at the TE station ("station", the default) or interpolated along both walls to
+    m* = m_TE - offset_chords * chord ("fixed_m")."""
+    if not isinstance(grid, Grid):
+        raise TypeError(f"wall_values takes a Grid, got {type(grid).__name__}")
+    shape = (len(grid.m), len(grid.eta))
+    W_m, W_theta = np.asarray(flow.W_m, dtype=float), np.asarray(flow.W_theta, dtype=float)
+    if W_m.shape != shape or W_theta.shape != shape:
+        raise KuttaError(f"the flow has shape {W_m.shape}, the grid {shape}")
+    last = shape[1] - 1
+    f, l = grid.first_blade_i, grid.last_blade_i
+    if evaluation == "station":
+        speed = np.hypot(W_m[l], W_theta[l])
+        values = (float(speed[0]), float(speed[last]), float(W_m[l, 0]), float(W_m[l, last]))
+        if not all(math.isfinite(v) for v in values):
+            raise KuttaError(f"a wall speed at the TE station {l} is not finite")
+        return WallValues(evaluation="station", m=float(grid.m[l]), W0=values[0], W1=values[1], W_m0=values[2],
+                          W_m1=values[3], stations=(l,), interpolation=None)
+    if evaluation != "fixed_m":
+        raise KuttaError(f"unknown Kutta evaluation {evaluation!r}; expected one of {KUTTA_EVALUATIONS}")
+    if interpolation not in KUTTA_INTERPOLATIONS:
+        raise KuttaError(f"unknown interpolation {interpolation!r}; expected one of {KUTTA_INTERPOLATIONS}")
+    if (offset_chords is None or isinstance(offset_chords, bool) or not isinstance(offset_chords, (int, float))
+            or not math.isfinite(offset_chords)):
+        raise KuttaError(f"the fixed_m evaluation needs a finite offset in chords, got {offset_chords!r}")
+    m_star = float(grid.m_te) - float(offset_chords) * float(grid.chord)
+    m = np.asarray(grid.m, dtype=float)
+    if not (m[f] <= m_star <= m[l]):
+        raise KuttaError(f"m* = m_TE - {offset_chords:g} chord = {m_star:.6g} lies outside the blade wall nodes "
+                         f"[{m[f]:.6g}, {m[l]:.6g}] (stations {f} .. {l}): no nodes on both sides, nothing is "
+                         f"extrapolated")
+    p = min(int(np.searchsorted(m, m_star, side="right")) - 1, l - 1)      # m[p] <= m* <= m[p + 1], f <= p < l
+    if interpolation == "linear":
+        nodes = np.array([p, p + 1])
+    else:
+        if l - f < 3:
+            raise KuttaError(f"the cubic needs four blade stations, the run {f} .. {l} has {l - f + 1}")
+        start = min(max(p - 1, f), l - 3)
+        nodes = np.arange(start, start + 4)
+    weights = _lagrange_weights(m[nodes], m_star)
+    speed = np.hypot(W_m[nodes], W_theta[nodes])
+    values = (float(weights @ speed[:, 0]), float(weights @ speed[:, last]), float(weights @ W_m[nodes, 0]),
+              float(weights @ W_m[nodes, last]))
+    if not all(math.isfinite(v) for v in values):
+        raise KuttaError(f"a wall speed near m* = {m_star:.6g} is not finite")
+    return WallValues(evaluation="fixed_m", m=m_star, W0=values[0], W1=values[1], W_m0=values[2], W_m1=values[3],
+                      stations=tuple(int(k) for k in nodes), interpolation=interpolation)
+
+
+def _lagrange_weights(x: np.ndarray, x0: float) -> np.ndarray:
+    """Weights w with sum_k w_k y_k the interpolating polynomial through (x_k, y_k) at x0."""
+    w = np.ones(len(x))
+    for k in range(len(x)):
+        for j in range(len(x)):
+            if j != k:
+                w[k] *= (x0 - x[j]) / (x[k] - x[j])
+    return w
+
+
+def residual_from_walls(walls: WallValues, grid: Grid) -> KuttaResidual:
+    """R_K, eps_K and W0 - W1 of the wall speeds walls (module docstring, sections 3 and 7), the
+    SS / PS identity of grid's TE station; for "station" values exactly kutta_residual."""
+    station = trailing_edge_station(grid)
+    last = len(grid.eta) - 1
+    speed = {0: float(walls.W0), last: float(walls.W1)}
+    W_ss, W_ps = speed[station.ss_j], speed[station.ps_j]
+    residual = W_ss - W_ps
+    mean = 0.5 * (abs(W_ss) + abs(W_ps))
+    normalized = abs(residual) / mean if mean > 0.0 else 0.0
+    return KuttaResidual(station=station, W_ss=W_ss, W_ps=W_ps, residual=residual, normalized=normalized,
+                         wall_difference=speed[0] - speed[last])
+
+
+# --- section 8: Aungier's correction as the study brief writes it (study option, 2026-11-14) --------------------
+
+def _te_cosines(metrics: GridMetrics) -> tuple[float, float]:
+    K = metrics.grid.last_blade_i
+    b0, b1 = math.atan(float(metrics.tan_beta0[K])), math.atan(float(metrics.tan_beta1[K]))
+    return math.cos(b0), math.cos(b1)
+
+
+def inside_outside_average(walls: WallValues, metrics: GridMetrics) -> WallValues:
+    """Eq. 13-58: W_i_te = 0.5 [W_i + 2 (W_m)_i / (cos b0 + cos b1)], i = 0, 1, b0 and b1 the
+    wall angles at the TE station K (module docstring, section 8). The meridional velocities
+    are kept as they were."""
+    if not isinstance(metrics, GridMetrics):
+        raise TypeError(f"inside_outside_average takes GridMetrics, got {type(metrics).__name__}")
+    cos0, cos1 = _te_cosines(metrics)
+    total = cos0 + cos1
+    if not (math.isfinite(total) and total > 0.0):
+        raise KuttaError(f"cos b0 + cos b1 = {total!r} at the TE station")
+    return replace(walls, W0=0.5 * (walls.W0 + 2.0 * walls.W_m0 / total), W1=0.5 * (walls.W1 + 2.0 * walls.W_m1 / total))
+
+
+def aungier_exit_angle_correction(residual: KuttaResidual, flow: FlowField, metrics: GridMetrics) -> ExitAngleCorrection:
+    """Eqs. 13-57 and 13-59 as the study brief writes them (module docstring, section 8), from
+    the wall difference W0_te - W1_te of residual; undamped."""
+    if not isinstance(metrics, GridMetrics):
+        raise TypeError(f"aungier_exit_angle_correction takes GridMetrics, got {type(metrics).__name__}")
+    grid = metrics.grid
+    K = grid.last_blade_i
+    if residual.station.i != K:
+        raise KuttaError(f"the residual is at station {residual.station.i}, the TE station of these metrics is {K}")
+    W_m = np.asarray(flow.W_m, dtype=float)
+    if W_m.shape != (len(grid.m), len(grid.eta)):
+        raise KuttaError(f"the flow has shape {W_m.shape}, the grid {(len(grid.m), len(grid.eta))}")
+    r = 1.0                                                     # planar cascade
+    dm_K = float(grid.m[K] - grid.m[K - 1])
+    S = float(metrics.S[K])
+    cos0, cos1 = _te_cosines(metrics)
+    exit_r_W_m = r * float(np.trapezoid(W_m[-1], grid.eta))    # (r W_m) at the downstream boundary, its eta mean
+    if not all(math.isfinite(v) for v in (dm_K, S, cos0, cos1, exit_r_W_m, residual.wall_difference)):
+        raise KuttaError("a TE slope, width, spacing, speed or the downstream (r W_m) is not finite")
+    if not (S > 0.0 and dm_K > 0.0 and exit_r_W_m > 0.0):
+        raise KuttaError(f"S = {S}, dm_K = {dm_K} and (r W_m) downstream = {exit_r_W_m} must be positive")
+    d_r_c_theta = 2.0 * r * residual.wall_difference * dm_K / (S * (cos0 + cos1))          # Eq. 13-57
+    return ExitAngleCorrection(wall_difference=residual.wall_difference, delta_c_theta=d_r_c_theta / r,
+                               exit_meridional_integral=exit_r_W_m / r, passage_width=S, dm=dm_K, cos_beta0=cos0,
+                               cos_beta1=cos1, delta_tan=d_r_c_theta / exit_r_W_m)             # Eq. 13-59
+
+
+def relaxed_exit_angle(exit_angle: float, correction: ExitAngleCorrection, alpha: float) -> float:
+    """arctan(tan(exit_angle) + alpha * correction.delta_tan), radians, for any finite alpha > 0
+    (module docstring, section 8: the relaxation scan of the Aungier methods)."""
+    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)) or not (math.isfinite(alpha) and alpha > 0.0):
+        raise KuttaError(f"the relaxation alpha {alpha!r} must be a finite positive number")
+    angle = float(exit_angle)
+    if not (math.isfinite(angle) and abs(angle) < 0.5 * math.pi):
+        raise KuttaError(f"the exit angle {exit_angle!r} rad is not within (-pi/2, pi/2)")
+    step = alpha * correction.delta_tan
+    if not math.isfinite(step):
+        raise KuttaError(f"the correction of tan(beta_out) is {correction.delta_tan!r}: not finite")
+    if step == 0.0:
+        return angle
     return math.atan(math.tan(angle) + step)

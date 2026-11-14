@@ -200,6 +200,26 @@ The periodic PDE line (build_periodic_pde_rows, added 2026-11-12)
     Their spread points to the grid topology at the LE and TE (grid.py section 6), not to
     more stencil exceptions.
 
+Study option: face-flux rows at the transitions (transition_form, 2026-11-14;
+scripts/transition_study.py; default "expanded", the rows above, unchanged)
+    "flux" replaces the interior rows (j = 1 .. n_eta - 2) of the stations first_blade_i - 1,
+    first_blade_i, last_blade_i and last_blade_i + 1 by the divergence form Eq. 5-20 on face
+    fluxes, so that D and E never appear:
+        [F(i, j+1/2) - F(i, j-1/2)] / deta - [G(i+1/2, j) - G(i-1/2, j)] / dm = 0,
+        F = A psi_eta - B psi_m,   G = B psi_eta - C psi_m,
+    the face coefficients the means of the two nodes (A(i, j+1/2) = (A[i, j] + A[i, j+1]) / 2,
+    likewise B and C), the normal difference across the face two-point ((psi[i, j+1] -
+    psi[i, j]) / deta), the tangential one the mean of the central differences of the face's two
+    nodes ((psi_m)(i, j+1/2) = (psi[i+1, j] - psi[i-1, j] + psi[i+1, j+1] - psi[i-1, j+1]) /
+    (4 dm), likewise (psi_eta)(i+1/2, j)). A nine-point row on the same neighbours, divided by the
+    same H as the row it replaces. The periodic-line rows (j = n_eta - 1) are not replaced.
+    Against the expanded row it differs, at every node, by
+        (A[j+1] - 2 A[j] + A[j-1]) (psi[j+1] - 2 psi[j] + psi[j-1]) / (4 deta^2)
+      + (C[i+1] - 2 C[i] + C[i-1]) (psi[i+1] - 2 psi[i] + psi[i-1]) / (4 dm^2)  + the same for B,
+    O(h^2) where the fields are smooth, zero for constant coefficients (and for coefficients
+    linear along a direction in which psi is linear); no single-valued face flux reproduces the
+    central expanded row exactly for general coefficients (it is not conservative).
+
 Status: build_interior_stencil and InteriorStencil implemented 2026-11-12, under review,
 not frozen; build_periodic_pde_rows added 2026-11-12 and its TE row revised the same day
 (forward psi_m, psi_m,m; InteriorStencil, the standard and the LE rows unchanged bit for
@@ -226,6 +246,8 @@ Field = NDArray[np.float64]
 Node = tuple[int, int]
 
 _WEIGHTS = ("center", "west", "east", "south", "north", "mixed", "rhs", "H")
+
+TRANSITION_FORMS = ("expanded", "flux")     # study option (module docstring); "expanded" is the production form
 
 PERIODIC_STANDARD = "periodic standard"
 PERIODIC_LE_TRANSITION = "periodic LE transition"
@@ -548,6 +570,67 @@ def _interior_stencil(A: Field, B: Field, C: Field, D: Field, E: Field, dm: floa
             raise DiscretizationError(f"the {name} weight is not finite at node ({i}, {j}) (H = {H[i, j]:.6g})")
     return InteriorStencil(center=center, west=west, east=east, south=south, north=north, mixed=mixed, rhs=rhs, H=H,
                            interior=interior, dm=dm, deta=deta)
+
+
+def transition_flux_weights(coefficients: CoefficientFields, metrics: GridMetrics) -> tuple[NDArray[np.float64],
+                                                                                           tuple[Node, ...]]:
+    """The face-flux rows of the study option transition_form "flux" (module docstring): the
+    normalized nine weights (n_m, n_eta, 3, 3) at the replaced rows, NaN elsewhere, and those
+    rows' nodes. Same entry convention as InteriorStencil.weights."""
+    if not isinstance(coefficients, CoefficientFields):
+        raise TypeError(f"transition_flux_weights takes CoefficientFields, got {type(coefficients).__name__}")
+    if not isinstance(metrics, GridMetrics):
+        raise TypeError(f"transition_flux_weights takes GridMetrics, got {type(metrics).__name__}")
+    grid = metrics.grid
+    _check_belongs(coefficients, metrics)
+    dm, deta = coefficients.length_scale * grid.dm, grid.deta
+    A, C = coefficients.A, coefficients.C
+    H = 2.0 * A / deta ** 2 + 2.0 * C / dm ** 2
+    return _flux_transition_weights(A, coefficients.B, C, dm, deta, grid.first_blade_i, grid.last_blade_i, H)
+
+
+def _flux_transition_weights(A: Field, B: Field, C: Field, dm: float, deta: float, first_blade_i: int,
+                             last_blade_i: int, H: Field) -> tuple[NDArray[np.float64], tuple[Node, ...]]:
+    """transition_flux_weights from raw arrays; H the divisor of the rows replaced."""
+    A, B, C, H = (np.asarray(a, dtype=float) for a in (A, B, C, H))
+    n_m, n_eta = A.shape
+    f, l = int(first_blade_i), int(last_blade_i)
+    stations = sorted({f - 1, f, l, l + 1})
+    if stations[0] < 1 or stations[-1] > n_m - 2:
+        raise DiscretizationError(f"the transition stations {stations} do not fit {n_m} stations")
+    rows = tuple((i, j) for i in stations for j in range(1, n_eta - 1))
+    out = np.full((n_m, n_eta, 3, 3), np.nan)
+    h, k = float(deta), float(dm)
+    for i, j in rows:
+        w = _flux_raw_weights(A, B, C, i, j, h, k)
+        divisor = float(H[i, j])
+        if not (math.isfinite(divisor) and divisor > 0.0):
+            raise DiscretizationError(f"H = {divisor!r} at the flux row ({i}, {j})")
+        out[i, j] = w / -divisor
+        if not np.all(np.isfinite(out[i, j])):
+            raise DiscretizationError(f"a face-flux weight is not finite at ({i}, {j})")
+    return out, rows
+
+
+def _flux_raw_weights(A: Field, B: Field, C: Field, i: int, j: int, h: float, k: float) -> NDArray[np.float64]:
+    """The raw nine weights [1 + di, 1 + dj] of the face-flux row at (i, j) (module docstring,
+    study option): dF/deta - dG/dm, h = deta, k = dm, face coefficients the means of two nodes."""
+    a_p, a_m = 0.5 * (A[i, j] + A[i, j + 1]), 0.5 * (A[i, j] + A[i, j - 1])
+    c_p, c_m = 0.5 * (C[i, j] + C[i + 1, j]), 0.5 * (C[i, j] + C[i - 1, j])
+    be_p, be_m = 0.5 * (B[i, j] + B[i, j + 1]), 0.5 * (B[i, j] + B[i, j - 1])     # B on the eta faces j +- 1/2
+    bm_p, bm_m = 0.5 * (B[i, j] + B[i + 1, j]), 0.5 * (B[i, j] + B[i - 1, j])     # B on the m faces i +- 1/2
+    q = 1.0 / (4.0 * h * k)
+    w = np.zeros((3, 3))
+    w[1, 1] = -(a_p + a_m) / h ** 2 - (c_p + c_m) / k ** 2
+    w[1, 2] = a_p / h ** 2 - (bm_p - bm_m) * q                  # N (i, j+1)
+    w[1, 0] = a_m / h ** 2 + (bm_p - bm_m) * q                  # S (i, j-1)
+    w[2, 1] = c_p / k ** 2 - (be_p - be_m) * q                  # E (i+1, j)
+    w[0, 1] = c_m / k ** 2 + (be_p - be_m) * q                  # W (i-1, j)
+    w[2, 2] = -(be_p + bm_p) * q                                # NE
+    w[0, 2] = (be_p + bm_m) * q                                 # NW
+    w[2, 0] = (be_m + bm_p) * q                                 # SE
+    w[0, 0] = -(be_m + bm_m) * q                                # SW
+    return w
 
 
 def _spacing(value: float, name: str) -> float:

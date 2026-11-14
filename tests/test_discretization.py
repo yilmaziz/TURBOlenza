@@ -209,7 +209,8 @@ def test_the_public_names_and_the_deferred_interfaces():
     functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")}
     classes = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
     assert functions == {"build_interior_stencil", "build_periodic_pde_rows", "first_derivatives", "mixed_derivative",
-                         "residual", "assemble"}
+                         "residual", "assemble",
+                         "transition_flux_weights"}     # 2026-11-14: the transition_form "flux" study option
     assert classes == {"DiscretizationError", "InteriorStencil", "PDETerm", "PeriodicPDERow"}
     assert issubclass(dz.DiscretizationError, ValueError)
     assert dz.Coefficients is cf.CoefficientFields

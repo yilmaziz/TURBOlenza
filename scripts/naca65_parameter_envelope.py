@@ -160,6 +160,7 @@ REFUSAL_KINDS = (
     ("throat_zero", "Z", "throat opening"),
     ("throat_not_converged", "K", "throat refinement did not converge"),
     ("blades_closer_than_throat", "P", "come closer"),
+    ("te_circle_cut", "T", "cuts into the TE circle"),
     ("construction_failed", "C", "failed for cl0="),
 )
 LINES: list[str] = []
@@ -1000,12 +1001,15 @@ def figure_grid_status(rows: list[dict], variant: str, path: Path, captions: dic
 
 
 def figure_cascade(rows: list[dict], path: Path, captions: dict) -> None:
+    from matplotlib.lines import Line2D
+
     plt = pyplot()
     fig, ax = plt.subplots(figsize=(FIG_WIDTH_IN, 0.62 * FIG_WIDTH_IN), layout="constrained")
     colors = (INK["blue"], INK["orange"], INK["aqua"])
+    offsets = ((4, 5), (4, 6), (4, -12))            # direct labels at the left end, clear of each other
     blades = list(dict.fromkeys((r["cl0"], r["t_max_over_c"]) for r in rows))
-    lower_note = ""
-    for color, (cl0, t) in zip(colors, blades):
+    lower_note, ceilings = "", []
+    for color, offset, (cl0, t) in zip(colors, offsets, blades):
         mine = [r for r in rows if (r["cl0"], r["t_max_over_c"]) == (cl0, t)]
         st = np.array([r["stagger_deg"] for r in mine])
         top = np.array([float(r["largest_accepted_solidity"]) if r.get("largest_accepted_solidity") not in ("", None)
@@ -1023,12 +1027,12 @@ def figure_cascade(rows: list[dict], path: Path, captions: dict) -> None:
                           "solidity was refused (bisected the same way).")
         ceiling = mine[0]["kappa_le_stagger_ceiling_deg"]
         ax.axvline(ceiling, color=color, ls="--", lw=1.2)
-        ax.text(ceiling, 0.98, f" kappa_le = 90 deg\n stagger {ceiling:.2f}", color="#0b0b0b", rotation=90,
-                transform=ax.get_xaxis_transform(), va="top", ha="right", fontsize=FONT_SIZE - 2)
+        ceilings.append(Line2D([], [], color=color, ls="--", lw=1.2,
+                               label=f"{label}: kappa_le = 90 deg at stagger {ceiling:.2f}"))
         last = np.flatnonzero(np.isfinite(top))
         if last.size:
-            ax.annotate(label, (st[last[0]], top[last[0]]), textcoords="offset points", xytext=(4, 4), fontsize=FONT_SIZE - 1.5,
-                        color="#0b0b0b")
+            ax.annotate(label, (st[last[0]], top[last[0]]), textcoords="offset points", xytext=offset,
+                        fontsize=FONT_SIZE - 1.5, color="#0b0b0b")
     ax.set_yscale("log")
     ax.set_xlim(min(r["stagger_deg"] for r in rows) - 3.0,
                 max(max(r["stagger_deg"] for r in rows), max(r["kappa_le_stagger_ceiling_deg"] for r in rows)) + 3.0)
@@ -1037,7 +1041,8 @@ def figure_cascade(rows: list[dict], path: Path, captions: dict) -> None:
     ax.grid(True, which="both", color=GRID_INK, lw=0.6)
     ax.set_axisbelow(True)
     ax.set_title(f"Largest solidity make_cascade accepts (NACA 65 {CASCADE_VARIANT}, C2)", loc="left")
-    ax.legend(loc="lower left", frameon=False)
+    handles, _ = ax.get_legend_handles_labels()
+    ax.legend(handles=handles + ceilings, loc="lower left", frameon=False, fontsize=FONT_SIZE - 1.5)
     r0 = rows[0]
     _save(fig, path, f"Largest solidity geometry.make_cascade accepts against stagger for three NACA 65 blades "
                      f"({CASCADE_VARIANT}, default C2 spec): scan {r0['scan_solidities']}, then bisection between the "
